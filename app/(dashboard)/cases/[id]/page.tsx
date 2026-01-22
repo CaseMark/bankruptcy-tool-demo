@@ -10,11 +10,20 @@ import {
   ChevronRight,
   Loader2,
   ArrowLeft,
-  Trash2
+  Trash2,
+  AlertTriangle,
+  CheckCircle2,
+  Pencil,
 } from "lucide-react";
 import Link from "next/link";
 import { DocumentUpload } from "@/components/cases/document-upload";
 import { CaseStatusBadge } from "@/components/cases/case-status-badge";
+import { EditClientModal } from "@/components/cases/edit-client-modal";
+import {
+  getRequiredDocuments,
+  getMissingDocuments,
+  getDocumentCompletionPercentage,
+} from "@/lib/bankruptcy/required-documents";
 import {
   AlertDialog,
   AlertDialogAction,
@@ -50,6 +59,7 @@ interface CaseData {
 interface Document {
   id: string;
   fileName: string;
+  documentType: string;
   validationStatus: string;
   uploadedAt: string;
 }
@@ -65,6 +75,8 @@ export default function CaseDetailPage() {
   const [error, setError] = useState<string | null>(null);
   const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
   const [deleting, setDeleting] = useState(false);
+  const [showAllMissingDocs, setShowAllMissingDocs] = useState(false);
+  const [editModalOpen, setEditModalOpen] = useState(false);
 
   const handleDeleteCase = async () => {
     const connectionString = localStorage.getItem('bankruptcy_db_connection');
@@ -193,6 +205,12 @@ export default function CaseDetailPage() {
     invalid: documents.filter((d) => d.validationStatus === "invalid").length,
   };
 
+  // Calculate document completion for Chapter 7
+  const uploadedDocTypes = documents.map((d) => d.documentType);
+  const missingDocs = getMissingDocuments(uploadedDocTypes);
+  const completionPercentage = getDocumentCompletionPercentage(uploadedDocTypes);
+  const hasAllRequiredDocs = missingDocs.length === 0;
+
   return (
     <div className="container mx-auto p-6 max-w-7xl">
       {/* Back Button and Actions */}
@@ -226,9 +244,20 @@ export default function CaseDetailPage() {
         </div>
         <div className="flex items-center justify-between">
           <div>
-            <h1 className="text-3xl font-bold tracking-tight">
-              {caseData.clientName}
-            </h1>
+            <div className="flex items-center gap-3">
+              <h1 className="text-4xl tracking-tight">
+                {caseData.clientName}
+              </h1>
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => setEditModalOpen(true)}
+                className="flex items-center gap-2"
+              >
+                <Pencil className="w-4 h-4" />
+                Edit Client Info
+              </Button>
+            </div>
             <p className="text-muted-foreground mt-1">
               {caseData.caseType === "chapter7" ? "Chapter 7" : "Chapter 13"}{" "}
               Bankruptcy Case
@@ -237,6 +266,104 @@ export default function CaseDetailPage() {
           <CaseStatusBadge status={caseData.status} />
         </div>
       </div>
+
+      {/* Document Upload Reminder Banner */}
+      {!hasAllRequiredDocs && caseData.status === 'intake' && (
+        <div className="bg-amber-50 border border-amber-200 rounded-xl p-5 mb-8">
+          <div className="flex items-start gap-4">
+            <div className="p-2 bg-amber-100 rounded-lg">
+              <AlertTriangle className="w-6 h-6 text-amber-600" />
+            </div>
+            <div className="flex-1">
+              <h3 className="font-semibold text-amber-900 mb-1">
+                Required Documents Missing
+              </h3>
+              <p className="text-sm text-amber-700 mb-3">
+                {missingDocs.length} required document{missingDocs.length !== 1 ? 's' : ''} still needed to proceed with your Chapter 7 filing.
+                Upload them to continue.
+              </p>
+
+              {/* Progress Bar */}
+              <div className="mb-3">
+                <div className="flex justify-between text-xs text-amber-700 mb-1">
+                  <span>Document Completion</span>
+                  <span>{completionPercentage}%</span>
+                </div>
+                <div className="w-full bg-amber-200 rounded-full h-2">
+                  <div
+                    className="bg-amber-500 h-2 rounded-full transition-all duration-300"
+                    style={{ width: `${completionPercentage}%` }}
+                  />
+                </div>
+              </div>
+
+              {/* Missing Documents List */}
+              <div className="flex flex-wrap gap-2 mb-4">
+                {(showAllMissingDocs ? missingDocs : missingDocs.slice(0, 4)).map((doc) => (
+                  <span
+                    key={doc.type}
+                    className="inline-flex items-center gap-1 px-2 py-1 bg-amber-100 text-amber-800 rounded text-xs"
+                  >
+                    <FileText className="w-3 h-3" />
+                    {doc.name}
+                  </span>
+                ))}
+                {missingDocs.length > 4 && !showAllMissingDocs && (
+                  <button
+                    onClick={() => setShowAllMissingDocs(true)}
+                    className="text-xs text-amber-700 hover:text-amber-900 hover:underline font-medium cursor-pointer"
+                  >
+                    +{missingDocs.length - 4} more
+                  </button>
+                )}
+                {showAllMissingDocs && missingDocs.length > 4 && (
+                  <button
+                    onClick={() => setShowAllMissingDocs(false)}
+                    className="text-xs text-amber-700 hover:text-amber-900 hover:underline font-medium cursor-pointer"
+                  >
+                    Show less
+                  </button>
+                )}
+              </div>
+
+              <Link href={`/cases/${id}/documents`}>
+                <Button size="sm" className="bg-amber-600 hover:bg-amber-700 text-white">
+                  <Upload className="w-4 h-4 mr-2" />
+                  Upload Documents
+                </Button>
+              </Link>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* All Documents Complete Banner */}
+      {hasAllRequiredDocs && documents.length > 0 && caseData.status === 'intake' && (
+        <div className="bg-green-50 border border-green-200 rounded-xl p-4 mb-8">
+          <div className="flex items-center gap-3">
+            <CheckCircle2 className="w-6 h-6 text-green-600" />
+            <div>
+              <h3 className="font-semibold text-green-900">All Required Documents Uploaded</h3>
+              <p className="text-sm text-green-700">
+                You have uploaded all required documents. Review your financial data and run the means test.
+              </p>
+            </div>
+            <Link href={`/cases/${id}/means-test`} className="ml-auto">
+              <Button size="sm" variant="outline" className="border-green-300 text-green-700 hover:bg-green-100">
+                Run Means Test
+              </Button>
+            </Link>
+          </div>
+        </div>
+      )}
+
+      {/* Edit Client Modal */}
+      <EditClientModal
+        open={editModalOpen}
+        onOpenChange={setEditModalOpen}
+        caseData={caseData}
+        onSuccess={(updatedCase) => setCaseData(updatedCase)}
+      />
 
       {/* Delete Confirmation Dialog */}
       <AlertDialog open={deleteDialogOpen} onOpenChange={setDeleteDialogOpen}>
@@ -270,8 +397,8 @@ export default function CaseDetailPage() {
 
       {/* Case Information Card */}
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 mb-8">
-        <div className="bg-card p-6 rounded-lg border">
-          <h3 className="font-semibold mb-4">Client Information</h3>
+        <div className="bg-card p-6 rounded border border-border">
+          <h3 className="text-lg font-semibold mb-5">Client Information</h3>
           <dl className="space-y-2 text-sm">
             {caseData.clientEmail && (
               <div>
@@ -300,8 +427,8 @@ export default function CaseDetailPage() {
           </dl>
         </div>
 
-        <div className="bg-card p-6 rounded-lg border">
-          <h3 className="font-semibold mb-4">Address</h3>
+        <div className="bg-card p-6 rounded border border-border">
+          <h3 className="text-lg font-semibold mb-5">Address</h3>
           <div className="text-sm">
             {caseData.address && <p>{caseData.address}</p>}
             {caseData.city && caseData.state && (
@@ -317,8 +444,8 @@ export default function CaseDetailPage() {
           </div>
         </div>
 
-        <div className="bg-card p-6 rounded-lg border">
-          <h3 className="font-semibold mb-4">Case Details</h3>
+        <div className="bg-card p-6 rounded border border-border">
+          <h3 className="text-lg font-semibold mb-5">Case Details</h3>
           <dl className="space-y-2 text-sm">
             <div>
               <dt className="text-muted-foreground">Filing Type</dt>
@@ -346,11 +473,11 @@ export default function CaseDetailPage() {
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4 mb-8">
         <Link
           href={`/cases/${id}/documents`}
-          className="bg-card p-4 rounded-lg border hover:shadow-md transition-shadow"
+          className="bg-card p-4 rounded border border-border hover:shadow-md transition-shadow hover:border-primary/50"
         >
           <div className="flex items-center gap-3">
-            <div className="p-2 bg-blue-100 rounded-lg">
-              <FileText className="w-5 h-5 text-blue-600" />
+            <div className="p-2 bg-accent rounded">
+              <FileText className="w-5 h-5 text-primary" />
             </div>
             <div className="flex-1">
               <div className="font-semibold">Documents</div>
@@ -363,11 +490,11 @@ export default function CaseDetailPage() {
 
         <Link
           href={`/cases/${id}/financial`}
-          className="bg-card p-4 rounded-lg border hover:shadow-md transition-shadow"
+          className="bg-card p-4 rounded border border-border hover:shadow-md transition-shadow hover:border-primary/50"
         >
           <div className="flex items-center gap-3">
-            <div className="p-2 bg-green-100 rounded-lg">
-              <DollarSign className="w-5 h-5 text-green-600" />
+            <div className="p-2 bg-accent rounded">
+              <DollarSign className="w-5 h-5 text-primary" />
             </div>
             <div className="flex-1">
               <div className="font-semibold">Financial Data</div>
@@ -380,11 +507,11 @@ export default function CaseDetailPage() {
 
         <Link
           href={`/cases/${id}/means-test`}
-          className="bg-card p-4 rounded-lg border hover:shadow-md transition-shadow"
+          className="bg-card p-4 rounded border border-border hover:shadow-md transition-shadow hover:border-primary/50"
         >
           <div className="flex items-center gap-3">
-            <div className="p-2 bg-purple-100 rounded-lg">
-              <Calculator className="w-5 h-5 text-purple-600" />
+            <div className="p-2 bg-accent rounded">
+              <Calculator className="w-5 h-5 text-primary" />
             </div>
             <div className="flex-1">
               <div className="font-semibold">Means Test</div>
@@ -397,11 +524,11 @@ export default function CaseDetailPage() {
 
         <Link
           href={`/cases/${id}/forms`}
-          className="bg-card p-4 rounded-lg border hover:shadow-md transition-shadow"
+          className="bg-card p-4 rounded border border-border hover:shadow-md transition-shadow hover:border-primary/50"
         >
           <div className="flex items-center gap-3">
-            <div className="p-2 bg-orange-100 rounded-lg">
-              <FileText className="w-5 h-5 text-orange-600" />
+            <div className="p-2 bg-accent rounded">
+              <FileText className="w-5 h-5 text-primary" />
             </div>
             <div className="flex-1">
               <div className="font-semibold">Forms</div>
@@ -414,7 +541,7 @@ export default function CaseDetailPage() {
       </div>
 
       {/* Document Upload Section */}
-      <div className="bg-card p-6 rounded-lg border">
+      <div className="bg-card p-6 rounded border border-border">
         <div className="flex items-center gap-3 mb-6">
           <Upload className="w-6 h-6 text-primary" />
           <div>

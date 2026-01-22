@@ -217,14 +217,14 @@ export function DocumentUpload({ caseId, onUploadComplete }: DocumentUploadProps
     <div className="space-y-6">
       {/* Document Type Selection */}
       <div>
-        <Label htmlFor="documentType" className="text-base mb-2 block">
+        <Label htmlFor="documentType" className="text-base block">
           Document Type
         </Label>
         <select
           id="documentType"
           value={documentType}
           onChange={(e) => setDocumentType(e.target.value)}
-          className="flex h-10 w-full max-w-md rounded-md border border-input bg-background px-3 py-2 text-sm ring-offset-background focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+          className="flex h-11 w-full max-w-md rounded-xl border border-input bg-background px-4 py-2.5 text-sm ring-offset-background focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
         >
           {DOCUMENT_TYPES.map((type) => (
             <option key={type.value} value={type.value}>

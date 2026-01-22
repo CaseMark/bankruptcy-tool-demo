@@ -82,20 +82,49 @@ export async function POST(
 
     try {
       // Ensure case_documents table exists
-      await sql`
-        CREATE TABLE IF NOT EXISTS case_documents (
-          id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-          case_id UUID NOT NULL REFERENCES bankruptcy_cases(id) ON DELETE CASCADE,
-          file_name TEXT NOT NULL,
-          file_type TEXT,
-          file_size INTEGER,
-          document_type TEXT,
-          validation_status TEXT DEFAULT 'pending',
-          extracted_data JSONB,
-          vault_file_id TEXT,
-          uploaded_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
-        )
-      `;
+      // Note: case_id is TEXT to match bankruptcy_cases.id which uses TEXT primary keys
+      try {
+        await sql`
+          CREATE TABLE IF NOT EXISTS case_documents (
+            id TEXT PRIMARY KEY DEFAULT gen_random_uuid()::TEXT,
+            case_id TEXT NOT NULL REFERENCES bankruptcy_cases(id) ON DELETE CASCADE,
+            file_name TEXT NOT NULL,
+            file_type TEXT,
+            file_size INTEGER,
+            document_type TEXT,
+            validation_status TEXT DEFAULT 'pending',
+            extracted_data JSONB,
+            vault_file_id TEXT,
+            ocr_text TEXT,
+            ocr_completed BOOLEAN DEFAULT FALSE,
+            uploaded_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+          )
+        `;
+      } catch (tableError: any) {
+        // If table creation fails due to schema mismatch, try to drop and recreate
+        if (tableError.code === '42804' || tableError.message?.includes('incompatible types')) {
+          console.log('Dropping and recreating case_documents table due to schema mismatch...');
+          await sql`DROP TABLE IF EXISTS case_documents CASCADE`;
+          await sql`
+            CREATE TABLE case_documents (
+              id TEXT PRIMARY KEY DEFAULT gen_random_uuid()::TEXT,
+              case_id TEXT NOT NULL REFERENCES bankruptcy_cases(id) ON DELETE CASCADE,
+              file_name TEXT NOT NULL,
+              file_type TEXT,
+              file_size INTEGER,
+              document_type TEXT,
+              validation_status TEXT DEFAULT 'pending',
+              extracted_data JSONB,
+              vault_file_id TEXT,
+              ocr_text TEXT,
+              ocr_completed BOOLEAN DEFAULT FALSE,
+              uploaded_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+            )
+          `;
+        } else {
+          throw tableError;
+        }
+      }
 
       // Insert document record
       const result = await sql`

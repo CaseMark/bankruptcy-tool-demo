@@ -35,6 +35,7 @@ import {
 } from '@/components/ui/alert-dialog';
 import { initializeDatabase, hasDatabase } from '@/lib/database/provision';
 import { CaseSelectorModal } from '@/components/cases/case-selector-modal';
+import { IntakeCallButton } from '@/components/voice/intake-call-button';
 
 // Feature configuration type
 interface FeatureConfig {
@@ -45,49 +46,49 @@ interface FeatureConfig {
   icon: React.ReactNode;
 }
 
-// P0 Feature configurations
+// P0 Feature configurations - using orange accent for case.dev branding
 const P0_FEATURES: Record<string, FeatureConfig> = {
   clientIntake: {
     id: 'clientIntake',
     title: 'Client Intake',
     description: 'Manage client information and documents',
     path: '',
-    icon: <Users className="w-5 h-5 text-blue-600" />,
+    icon: <Users className="w-5 h-5 text-primary" />,
   },
   documentUpload: {
     id: 'documentUpload',
     title: 'Document Upload',
     description: 'Upload and process financial documents',
     path: 'documents',
-    icon: <Upload className="w-5 h-5 text-blue-600" />,
+    icon: <Upload className="w-5 h-5 text-primary" />,
   },
   meansTest: {
     id: 'meansTest',
     title: 'Means Test',
     description: 'Calculate Chapter 7 eligibility',
     path: 'means-test',
-    icon: <Calculator className="w-5 h-5 text-purple-600" />,
+    icon: <Calculator className="w-5 h-5 text-primary" />,
   },
   formGeneration: {
     id: 'formGeneration',
     title: 'Form Generation',
     description: 'Generate official bankruptcy forms',
     path: 'forms',
-    icon: <FileText className="w-5 h-5 text-purple-600" />,
+    icon: <FileText className="w-5 h-5 text-primary" />,
   },
   chapter13Plan: {
     id: 'chapter13Plan',
     title: 'Chapter 13 Plan',
     description: 'View and manage repayment plan',
     path: 'financial',
-    icon: <DollarSign className="w-5 h-5 text-green-600" />,
+    icon: <DollarSign className="w-5 h-5 text-primary" />,
   },
   paymentTracking: {
     id: 'paymentTracking',
     title: 'Payment Tracking',
     description: 'Track financial data and payments',
     path: 'financial',
-    icon: <CreditCard className="w-5 h-5 text-green-600" />,
+    icon: <CreditCard className="w-5 h-5 text-primary" />,
   },
 };
 
@@ -218,10 +219,10 @@ export default function CasesPage() {
 
   if (loading || initializingDb) {
     return (
-      <div className="min-h-screen flex flex-col items-center justify-center gap-4" style={{ backgroundColor: '#f7f5f3' }}>
+      <div className="min-h-screen flex flex-col items-center justify-center gap-4 bg-background">
         {initializingDb && (
           <>
-            <Database className="w-12 h-12 text-blue-600 animate-pulse" />
+            <Database className="w-12 h-12 text-primary animate-pulse" />
             <p className="text-lg font-medium">Setting up your database...</p>
             <p className="text-sm text-muted-foreground">This will only take a moment</p>
           </>
@@ -233,16 +234,17 @@ export default function CasesPage() {
 
 
   return (
-    <div className="min-h-screen" style={{ backgroundColor: '#f7f5f3' }}>
+    <div className="min-h-screen bg-background">
       {/* Header */}
-      <header className="bg-white border-b">
+      <header className="bg-card border-b border-border">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-4">
           <div className="flex items-center justify-between">
             <div>
-              <h1 className="text-2xl font-bold text-gray-900">Bankruptcy Cases</h1>
-              <p className="text-sm text-gray-500 mt-1">Manage your Chapter 7 and Chapter 13 cases</p>
+              <h1 className="text-2xl text-foreground">Bankruptcy Cases</h1>
+              <p className="text-sm text-muted-foreground mt-1">Manage your Chapter 7 and Chapter 13 cases</p>
             </div>
             <div className="flex items-center gap-3">
+              <IntakeCallButton />
               <Link href="/login">
                 <Button variant="outline">
                   <Key className="w-4 h-4 mr-2" />
@@ -266,8 +268,8 @@ export default function CasesPage() {
           /* Empty State */
           <Card className="text-center py-12">
             <CardHeader>
-              <div className="mx-auto w-12 h-12 bg-blue-100 rounded-full flex items-center justify-center mb-4">
-                <FileText className="w-6 h-6 text-blue-600" />
+              <div className="mx-auto w-12 h-12 bg-accent rounded flex items-center justify-center mb-4">
+                <FileText className="w-6 h-6 text-primary" />
               </div>
               <CardTitle>No cases yet</CardTitle>
               <CardDescription>
@@ -295,11 +297,11 @@ export default function CasesPage() {
                 .toUpperCase()
                 .slice(0, 2) || '??';
               
-              // Generate a consistent color based on client name
+              // Use consistent orange-based avatar colors for case.dev branding
               const colors = [
-                'bg-blue-500', 'bg-purple-500', 'bg-green-500', 
-                'bg-orange-500', 'bg-pink-500', 'bg-indigo-500',
-                'bg-teal-500', 'bg-cyan-500'
+                'bg-primary', 'bg-orange-400', 'bg-amber-500',
+                'bg-orange-600', 'bg-amber-600', 'bg-orange-500',
+                'bg-amber-400', 'bg-primary'
               ];
               const colorIndex = c.clientName?.charCodeAt(0) % colors.length || 0;
               const avatarColor = colors[colorIndex];
@@ -310,22 +312,22 @@ export default function CasesPage() {
                 return status.charAt(0).toUpperCase() + status.slice(1).toLowerCase();
               };
 
-              // Get status color
+              // Get status color - using orange-based palette for case.dev
               const getStatusStyle = (status: string) => {
                 const s = status?.toLowerCase() || 'intake';
                 switch (s) {
                   case 'intake':
-                    return 'bg-blue-100 text-blue-700 border-blue-200';
+                    return 'bg-accent text-primary border-primary/20';
                   case 'active':
-                    return 'bg-green-100 text-green-700 border-green-200';
+                    return 'bg-green-50 text-green-700 border-green-200';
                   case 'pending':
-                    return 'bg-yellow-100 text-yellow-700 border-yellow-200';
+                    return 'bg-amber-50 text-amber-700 border-amber-200';
                   case 'filed':
-                    return 'bg-purple-100 text-purple-700 border-purple-200';
+                    return 'bg-orange-100 text-orange-700 border-orange-200';
                   case 'closed':
-                    return 'bg-gray-100 text-gray-700 border-gray-200';
+                    return 'bg-muted text-muted-foreground border-border';
                   default:
-                    return 'bg-blue-100 text-blue-700 border-blue-200';
+                    return 'bg-accent text-primary border-primary/20';
                 }
               };
 
@@ -342,7 +344,7 @@ export default function CasesPage() {
                         
                         {/* Name and Case Type */}
                         <div className="flex-1 min-w-0">
-                          <h3 className="font-semibold text-lg text-gray-900 truncate">{c.clientName}</h3>
+                          <h3 className="font-semibold text-lg text-foreground truncate">{c.clientName}</h3>
                           <p className="text-sm text-muted-foreground">
                             {c.caseType === 'chapter7' ? 'Chapter 7' : 'Chapter 13'} Bankruptcy
                           </p>
@@ -360,19 +362,19 @@ export default function CasesPage() {
                       </div>
 
                       {/* Divider */}
-                      <div className="border-t border-gray-100 my-3" />
+                      <div className="border-t border-border my-3" />
 
                       {/* Case Details Grid */}
                       <div className="grid grid-cols-2 gap-2 text-sm">
                         <div className="flex items-center gap-2">
                           <Users className="w-4 h-4 text-muted-foreground" />
-                          <span className="text-gray-600">
+                          <span className="text-muted-foreground">
                             {c.filingType === 'individual' ? 'Individual' : 'Joint Filing'}
                           </span>
                         </div>
                         <div className="flex items-center gap-2">
                           <Calendar className="w-4 h-4 text-muted-foreground" />
-                          <span className="text-gray-600">
+                          <span className="text-muted-foreground">
                             {new Date(c.createdAt).toLocaleDateString('en-US', { 
                               month: 'short', 
                               day: 'numeric',
@@ -426,13 +428,13 @@ export default function CasesPage() {
         <div className="mt-12">
           <h2 className="text-xl font-semibold mb-6">Platform Features</h2>
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
-            {/* P0 Features - Core */}
+            {/* P0 Features - Core - using orange accents for case.dev branding */}
             <Card
               onClick={() => handleFeatureClick('clientIntake')}
-              className="hover:shadow-md transition-shadow cursor-pointer border-l-4 border-l-blue-500 active:scale-[0.98]"
+              className="hover:shadow-md transition-shadow cursor-pointer border-l-4 border-l-primary active:scale-[0.98]"
             >
               <CardHeader className="pb-2">
-                <Users className="w-6 h-6 text-blue-600 mb-2" />
+                <Users className="w-6 h-6 text-primary mb-2" />
                 <CardTitle className="text-base">Client Intake</CardTitle>
               </CardHeader>
               <CardContent>
@@ -444,10 +446,10 @@ export default function CasesPage() {
 
             <Card
               onClick={() => handleFeatureClick('documentUpload')}
-              className="hover:shadow-md transition-shadow cursor-pointer border-l-4 border-l-blue-500 active:scale-[0.98]"
+              className="hover:shadow-md transition-shadow cursor-pointer border-l-4 border-l-primary active:scale-[0.98]"
             >
               <CardHeader className="pb-2">
-                <Upload className="w-6 h-6 text-blue-600 mb-2" />
+                <Upload className="w-6 h-6 text-primary mb-2" />
                 <CardTitle className="text-base">Document Upload</CardTitle>
               </CardHeader>
               <CardContent>
@@ -459,10 +461,10 @@ export default function CasesPage() {
 
             <Card
               onClick={() => handleFeatureClick('meansTest')}
-              className="hover:shadow-md transition-shadow cursor-pointer border-l-4 border-l-purple-500 active:scale-[0.98]"
+              className="hover:shadow-md transition-shadow cursor-pointer border-l-4 border-l-primary active:scale-[0.98]"
             >
               <CardHeader className="pb-2">
-                <Calculator className="w-6 h-6 text-purple-600 mb-2" />
+                <Calculator className="w-6 h-6 text-primary mb-2" />
                 <CardTitle className="text-base">Means Test</CardTitle>
               </CardHeader>
               <CardContent>
@@ -474,10 +476,10 @@ export default function CasesPage() {
 
             <Card
               onClick={() => handleFeatureClick('formGeneration')}
-              className="hover:shadow-md transition-shadow cursor-pointer border-l-4 border-l-purple-500 active:scale-[0.98]"
+              className="hover:shadow-md transition-shadow cursor-pointer border-l-4 border-l-primary active:scale-[0.98]"
             >
               <CardHeader className="pb-2">
-                <FileText className="w-6 h-6 text-purple-600 mb-2" />
+                <FileText className="w-6 h-6 text-primary mb-2" />
                 <CardTitle className="text-base">Form Generation</CardTitle>
               </CardHeader>
               <CardContent>
@@ -489,10 +491,10 @@ export default function CasesPage() {
 
             <Card
               onClick={() => handleFeatureClick('chapter13Plan')}
-              className="hover:shadow-md transition-shadow cursor-pointer border-l-4 border-l-green-500 active:scale-[0.98]"
+              className="hover:shadow-md transition-shadow cursor-pointer border-l-4 border-l-primary active:scale-[0.98]"
             >
               <CardHeader className="pb-2">
-                <DollarSign className="w-6 h-6 text-green-600 mb-2" />
+                <DollarSign className="w-6 h-6 text-primary mb-2" />
                 <CardTitle className="text-base">Chapter 13 Plan</CardTitle>
               </CardHeader>
               <CardContent>
@@ -504,10 +506,10 @@ export default function CasesPage() {
 
             <Card
               onClick={() => handleFeatureClick('paymentTracking')}
-              className="hover:shadow-md transition-shadow cursor-pointer border-l-4 border-l-green-500 active:scale-[0.98]"
+              className="hover:shadow-md transition-shadow cursor-pointer border-l-4 border-l-primary active:scale-[0.98]"
             >
               <CardHeader className="pb-2">
-                <CreditCard className="w-6 h-6 text-green-600 mb-2" />
+                <CreditCard className="w-6 h-6 text-primary mb-2" />
                 <CardTitle className="text-base">Payment Tracking</CardTitle>
               </CardHeader>
               <CardContent>
@@ -518,82 +520,82 @@ export default function CasesPage() {
             </Card>
 
             {/* P1 Features - Enhanced */}
-            <Card className="hover:shadow-md transition-shadow cursor-pointer border-l-4 border-l-orange-500 opacity-75">
+            <Card className="hover:shadow-md transition-shadow cursor-pointer border-l-4 border-l-amber-500 opacity-75">
               <CardHeader className="pb-2">
-                <Calendar className="w-6 h-6 text-orange-600 mb-2" />
+                <Calendar className="w-6 h-6 text-amber-600 mb-2" />
                 <CardTitle className="text-base">Timeline & Deadlines</CardTitle>
               </CardHeader>
               <CardContent>
                 <p className="text-xs text-muted-foreground">
                   Track key dates, hearings, and filing deadlines
                 </p>
-                <span className="text-[10px] bg-orange-100 text-orange-700 px-1.5 py-0.5 rounded mt-2 inline-block">Coming Soon</span>
+                <span className="text-[10px] bg-accent text-primary px-1.5 py-0.5 rounded mt-2 inline-block">Coming Soon</span>
               </CardContent>
             </Card>
 
-            <Card className="hover:shadow-md transition-shadow cursor-pointer border-l-4 border-l-orange-500 opacity-75">
+            <Card className="hover:shadow-md transition-shadow cursor-pointer border-l-4 border-l-amber-500 opacity-75">
               <CardHeader className="pb-2">
-                <Gavel className="w-6 h-6 text-orange-600 mb-2" />
+                <Gavel className="w-6 h-6 text-amber-600 mb-2" />
                 <CardTitle className="text-base">341 Meeting Prep</CardTitle>
               </CardHeader>
               <CardContent>
                 <p className="text-xs text-muted-foreground">
                   Generate preparation materials for creditor meetings
                 </p>
-                <span className="text-[10px] bg-orange-100 text-orange-700 px-1.5 py-0.5 rounded mt-2 inline-block">Coming Soon</span>
+                <span className="text-[10px] bg-accent text-primary px-1.5 py-0.5 rounded mt-2 inline-block">Coming Soon</span>
               </CardContent>
             </Card>
 
-            <Card className="hover:shadow-md transition-shadow cursor-pointer border-l-4 border-l-orange-500 opacity-75">
+            <Card className="hover:shadow-md transition-shadow cursor-pointer border-l-4 border-l-amber-500 opacity-75">
               <CardHeader className="pb-2">
-                <Shield className="w-6 h-6 text-orange-600 mb-2" />
+                <Shield className="w-6 h-6 text-amber-600 mb-2" />
                 <CardTitle className="text-base">Credit Report</CardTitle>
               </CardHeader>
               <CardContent>
                 <p className="text-xs text-muted-foreground">
                   Pull and analyze credit reports automatically
                 </p>
-                <span className="text-[10px] bg-orange-100 text-orange-700 px-1.5 py-0.5 rounded mt-2 inline-block">Coming Soon</span>
+                <span className="text-[10px] bg-accent text-primary px-1.5 py-0.5 rounded mt-2 inline-block">Coming Soon</span>
               </CardContent>
             </Card>
 
-            <Card className="hover:shadow-md transition-shadow cursor-pointer border-l-4 border-l-orange-500 opacity-75">
+            <Card className="hover:shadow-md transition-shadow cursor-pointer border-l-4 border-l-amber-500 opacity-75">
               <CardHeader className="pb-2">
-                <Database className="w-6 h-6 text-orange-600 mb-2" />
+                <Database className="w-6 h-6 text-amber-600 mb-2" />
                 <CardTitle className="text-base">PACER eFiling</CardTitle>
               </CardHeader>
               <CardContent>
                 <p className="text-xs text-muted-foreground">
                   Direct integration with court filing system
                 </p>
-                <span className="text-[10px] bg-orange-100 text-orange-700 px-1.5 py-0.5 rounded mt-2 inline-block">Coming Soon</span>
+                <span className="text-[10px] bg-accent text-primary px-1.5 py-0.5 rounded mt-2 inline-block">Coming Soon</span>
               </CardContent>
             </Card>
 
             {/* P2 Features - Analytics */}
-            <Card className="hover:shadow-md transition-shadow cursor-pointer border-l-4 border-l-gray-400 opacity-60">
+            <Card className="hover:shadow-md transition-shadow cursor-pointer border-l-4 border-l-muted-foreground/50 opacity-60">
               <CardHeader className="pb-2">
-                <BarChart3 className="w-6 h-6 text-gray-500 mb-2" />
+                <BarChart3 className="w-6 h-6 text-muted-foreground mb-2" />
                 <CardTitle className="text-base">Case Analytics</CardTitle>
               </CardHeader>
               <CardContent>
                 <p className="text-xs text-muted-foreground">
                   Firm-wide metrics and reporting dashboard
                 </p>
-                <span className="text-[10px] bg-gray-100 text-gray-600 px-1.5 py-0.5 rounded mt-2 inline-block">Planned</span>
+                <span className="text-[10px] bg-muted text-muted-foreground px-1.5 py-0.5 rounded mt-2 inline-block">Planned</span>
               </CardContent>
             </Card>
 
-            <Card className="hover:shadow-md transition-shadow cursor-pointer border-l-4 border-l-gray-400 opacity-60">
+            <Card className="hover:shadow-md transition-shadow cursor-pointer border-l-4 border-l-muted-foreground/50 opacity-60">
               <CardHeader className="pb-2">
-                <Clock className="w-6 h-6 text-gray-500 mb-2" />
+                <Clock className="w-6 h-6 text-muted-foreground mb-2" />
                 <CardTitle className="text-base">Plan Modifications</CardTitle>
               </CardHeader>
               <CardContent>
                 <p className="text-xs text-muted-foreground">
                   Streamlined Chapter 13 plan amendment workflow
                 </p>
-                <span className="text-[10px] bg-gray-100 text-gray-600 px-1.5 py-0.5 rounded mt-2 inline-block">Planned</span>
+                <span className="text-[10px] bg-muted text-muted-foreground px-1.5 py-0.5 rounded mt-2 inline-block">Planned</span>
               </CardContent>
             </Card>
           </div>

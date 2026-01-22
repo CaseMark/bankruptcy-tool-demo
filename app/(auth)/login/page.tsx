@@ -74,13 +74,13 @@ export default function SimpleLoginPage() {
   };
 
   return (
-    <div className="min-h-screen w-full flex items-center justify-center px-4 py-12" style={{ backgroundColor: '#f7f5f3' }}>
+    <div className="min-h-screen w-full flex items-center justify-center px-4 py-12 bg-background">
       <div className="w-full max-w-md space-y-8">
         {/* Header */}
         <div className="flex flex-col items-center space-y-4">
           <div className="flex items-center gap-3">
-            <Scale className="h-8 w-8" />
-            <h1 className="text-3xl font-bold tracking-tight">Bankruptcy Tool</h1>
+            <Scale className="h-8 w-8 text-primary" />
+            <h1 className="text-3xl tracking-tight text-foreground">Bankruptcy Tool</h1>
           </div>
           <p className="text-sm text-muted-foreground text-center">
             Automate Chapter 7 and Chapter 13 bankruptcy workflows
@@ -90,7 +90,7 @@ export default function SimpleLoginPage() {
             href="https://case.dev"
             target="_blank"
             rel="noopener noreferrer"
-            className="inline-flex items-center gap-1.5 rounded-full bg-neutral-100 px-2.5 py-1 text-xs font-medium text-neutral-700 hover:bg-neutral-200"
+            className="inline-flex items-center gap-1.5 rounded-full bg-accent px-2.5 py-1 text-xs font-medium text-foreground hover:bg-accent/80"
           >
             <span>built with</span>
             <Image
@@ -159,8 +159,8 @@ export default function SimpleLoginPage() {
         </Card>
 
         {/* Info */}
-        <div className="rounded-lg border bg-card p-4 space-y-2">
-          <h3 className="font-semibold text-sm">What you can do:</h3>
+        <div className="rounded border border-border bg-card p-4 space-y-2">
+          <h3 className="font-semibold text-sm text-foreground">What you can do:</h3>
           <ul className="list-disc list-inside space-y-1 text-xs text-muted-foreground">
             <li>Automatic OCR and document extraction</li>
             <li>AI-powered financial data analysis</li>

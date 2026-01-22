@@ -20,9 +20,9 @@ export async function GET(
   try {
     // Fetch document record
     const documentResult = await sql`
-      SELECT id, case_id, file_name, file_url, vault_object_id, document_type,
+      SELECT id, case_id, file_name, file_type, vault_file_id, document_type,
              extracted_data, validation_status, uploaded_at, ocr_text
-      FROM documents
+      FROM case_documents
       WHERE id = ${documentId} AND case_id = ${caseId}
     `;
 
@@ -38,8 +38,8 @@ export async function GET(
           id: document.id,
           caseId: document.case_id,
           fileName: document.file_name,
-          fileUrl: document.file_url,
-          vaultObjectId: document.vault_object_id,
+          fileType: document.file_type,
+          vaultFileId: document.vault_file_id,
           documentType: document.document_type,
           extractedData: document.extracted_data,
           validationStatus: document.validation_status,
@@ -50,17 +50,12 @@ export async function GET(
     }
 
     if (action === 'download') {
-      // If we have a direct file URL, return it
-      if (document.file_url) {
-        return NextResponse.json({ downloadUrl: document.file_url });
-      }
-
-      // Otherwise, get download URL from case.dev vault
-      if (document.vault_object_id && apiKey) {
+      // Get download URL from case.dev vault
+      if (document.vault_file_id && apiKey) {
         const client = new CaseDevClient(apiKey);
 
-        // Parse vault info from vault_object_id (format: vaultId:objectId)
-        const [vaultId, objectId] = document.vault_object_id.split(':');
+        // Parse vault info from vault_file_id (format: vaultId:objectId)
+        const [vaultId, objectId] = document.vault_file_id.split(':');
 
         if (vaultId && objectId) {
           try {
@@ -92,9 +87,9 @@ export async function GET(
       }
 
       // Try to fetch from vault if we have vault info
-      if (document.vault_object_id && apiKey) {
+      if (document.vault_file_id && apiKey) {
         const client = new CaseDevClient(apiKey);
-        const [vaultId, objectId] = document.vault_object_id.split(':');
+        const [vaultId, objectId] = document.vault_file_id.split(':');
 
         if (vaultId && objectId) {
           try {
@@ -103,7 +98,7 @@ export async function GET(
             // Cache the OCR text in the database
             if (text) {
               await sql`
-                UPDATE documents SET ocr_text = ${text} WHERE id = ${documentId}
+                UPDATE case_documents SET ocr_text = ${text} WHERE id = ${documentId}
               `;
             }
 
@@ -147,7 +142,7 @@ export async function DELETE(
   try {
     // Fetch document to get vault info before deletion
     const documentResult = await sql`
-      SELECT id, vault_object_id FROM documents
+      SELECT id, vault_file_id FROM case_documents
       WHERE id = ${documentId} AND case_id = ${caseId}
     `;
 
@@ -158,9 +153,9 @@ export async function DELETE(
     const document = documentResult[0];
 
     // Delete from vault if requested and we have vault info
-    if (deleteFromVault && document.vault_object_id && apiKey) {
+    if (deleteFromVault && document.vault_file_id && apiKey) {
       const client = new CaseDevClient(apiKey);
-      const [vaultId, objectId] = document.vault_object_id.split(':');
+      const [vaultId, objectId] = document.vault_file_id.split(':');
 
       if (vaultId && objectId) {
         try {
@@ -172,7 +167,7 @@ export async function DELETE(
     }
 
     // Delete from database
-    await sql`DELETE FROM documents WHERE id = ${documentId}`;
+    await sql`DELETE FROM case_documents WHERE id = ${documentId}`;
 
     return NextResponse.json({ success: true });
   } catch (error) {

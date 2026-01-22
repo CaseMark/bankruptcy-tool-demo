@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState, useCallback } from "react";
+import { useEffect, useState, useCallback, useRef } from "react";
 import { useRouter } from "next/navigation";
 import {
   FileText,
@@ -9,19 +9,21 @@ import {
   Clock,
   AlertCircle,
   ChevronRight,
-  Search,
-  Filter,
   Download,
   Eye,
   Trash2,
   Loader2,
   X,
   ArrowLeft,
+  Filter,
+  ChevronDown,
+  Sparkles,
 } from "lucide-react";
 import Link from "next/link";
 import { Button } from "@/components/ui/button";
-import { DocumentUpload } from "@/components/cases/document-upload";
 import { DeleteConfirmationModal } from "@/components/cases/financial/delete-confirmation-modal";
+import { Label } from "@/components/ui/label";
+import { DocumentUploadWizard } from "@/components/cases/document-upload-wizard";
 
 interface CaseData {
   id: string;
@@ -40,6 +42,36 @@ interface Document {
   vaultObjectId?: string | null;
 }
 
+const DOCUMENT_TYPES = [
+  { value: "paystub", label: "Pay Stub" },
+  { value: "w2", label: "W-2 Form" },
+  { value: "tax_return", label: "Tax Return" },
+  { value: "1099", label: "1099 Form" },
+  { value: "bank_statement", label: "Bank Statement" },
+  { value: "mortgage", label: "Mortgage Statement" },
+  { value: "lease", label: "Lease Agreement" },
+  { value: "utility", label: "Utility Bill" },
+  { value: "insurance", label: "Insurance Statement" },
+  { value: "credit_card", label: "Credit Card Statement" },
+  { value: "loan_statement", label: "Loan Statement" },
+  { value: "medical_bill", label: "Medical Bill" },
+  { value: "collection_notice", label: "Collection Notice" },
+  { value: "vehicle_title", label: "Vehicle Title" },
+  { value: "property_deed", label: "Property Deed" },
+  { value: "other", label: "Other" },
+];
+
+const REQUIRED_DOCUMENTS = [
+  { type: "tax_return", label: "Tax Returns (Last 2 Years)", required: true },
+  { type: "paystub", label: "Pay Stubs (Last 6 Months)", required: true },
+  { type: "bank_statement", label: "Bank Statements (Last 6 Months)", required: true },
+  { type: "mortgage", label: "Mortgage Statement or Lease", required: true },
+  { type: "vehicle_title", label: "Vehicle Titles & Loan Statements", required: false },
+  { type: "credit_card", label: "Credit Card Statements", required: true },
+  { type: "medical_bill", label: "Medical Bills", required: false },
+  { type: "utility", label: "Utility Bills", required: false },
+];
+
 export default function CaseDocumentsPage({
   params,
 }: {
@@ -52,6 +84,24 @@ export default function CaseDocumentsPage({
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
+  // Upload states
+  const [uploadingType, setUploadingType] = useState<string | null>(null);
+  const [selectedUploadType, setSelectedUploadType] = useState("paystub");
+  const [isDragging, setIsDragging] = useState(false);
+  const [uploadingFiles, setUploadingFiles] = useState<{
+    name: string;
+    status: 'uploading' | 'processing' | 'validating' | 'done' | 'error';
+    documentId?: string;
+    progress?: number;
+    statusMessage?: string;
+  }[]>([]);
+  const fileInputRef = useRef<HTMLInputElement>(null);
+  const quickUploadRef = useRef<HTMLInputElement>(null);
+  const eventSourcesRef = useRef<Map<number, EventSource>>(new Map());
+
+  // Filter state
+  const [filterType, setFilterType] = useState<string>("all");
+
   // Action states
   const [downloadingId, setDownloadingId] = useState<string | null>(null);
   const [viewingDocument, setViewingDocument] = useState<Document | null>(null);
@@ -62,12 +112,23 @@ export default function CaseDocumentsPage({
   const [deleteModalOpen, setDeleteModalOpen] = useState(false);
   const [documentToDelete, setDocumentToDelete] = useState<Document | null>(null);
 
+  // Guided upload wizard state
+  const [showGuidedUpload, setShowGuidedUpload] = useState(false);
+
   const connectionString = typeof window !== 'undefined' ? localStorage.getItem("bankruptcy_db_connection") : null;
   const apiKey = typeof window !== 'undefined' ? localStorage.getItem("casedev_api_key") : null;
 
   useEffect(() => {
     params.then((p) => setCaseId(p.id));
   }, [params]);
+
+  // Cleanup SSE connections on unmount
+  useEffect(() => {
+    return () => {
+      eventSourcesRef.current.forEach((es) => es.close());
+      eventSourcesRef.current.clear();
+    };
+  }, []);
 
   const fetchDocuments = useCallback(async () => {
     if (!caseId || !connectionString) return;
@@ -86,6 +147,81 @@ export default function CaseDocumentsPage({
     }
   }, [caseId, connectionString]);
 
+  // Subscribe to SSE for document processing status
+  const subscribeToDocumentStatus = useCallback(
+    (documentId: string, fileIndex: number) => {
+      if (!connectionString || !apiKey) return;
+
+      const searchParams = new URLSearchParams({
+        connectionString,
+        apiKey,
+      });
+
+      const url = `/api/documents/${documentId}/status?${searchParams.toString()}`;
+      const eventSource = new EventSource(url);
+      eventSourcesRef.current.set(fileIndex, eventSource);
+
+      eventSource.addEventListener("status", (event) => {
+        try {
+          const data = JSON.parse(event.data);
+
+          setUploadingFiles((prev) =>
+            prev.map((f, idx) => {
+              if (idx !== fileIndex) return f;
+
+              let status: typeof f.status = "processing";
+              if (data.status === "completed") {
+                status = "done";
+              } else if (data.status === "error") {
+                status = "error";
+              } else if (data.status === "validating") {
+                status = "validating";
+              }
+
+              return {
+                ...f,
+                status,
+                progress: data.progress || f.progress,
+                statusMessage: data.message,
+              };
+            })
+          );
+
+          // If completed, close connection and refresh documents
+          if (data.status === "completed") {
+            eventSource.close();
+            eventSourcesRef.current.delete(fileIndex);
+
+            // Check if all uploads are complete
+            setTimeout(() => {
+              setUploadingFiles((prev) => {
+                const allDone = prev.every(f => f.status === "done" || f.status === "error");
+                if (allDone) {
+                  fetchDocuments();
+                  return [];
+                }
+                return prev;
+              });
+            }, 1000);
+          }
+        } catch (e) {
+          console.error("Failed to parse SSE event:", e);
+        }
+      });
+
+      eventSource.addEventListener("error", () => {
+        eventSource.close();
+        eventSourcesRef.current.delete(fileIndex);
+      });
+
+      eventSource.onerror = () => {
+        eventSource.close();
+        eventSourcesRef.current.delete(fileIndex);
+      };
+    },
+    [connectionString, apiKey, fetchDocuments]
+  );
+
   useEffect(() => {
     if (!caseId) return;
 
@@ -102,7 +238,6 @@ export default function CaseDocumentsPage({
 
     const fetchData = async () => {
       try {
-        // Fetch case data
         const caseResponse = await fetch(
           `/api/cases/${caseId}?connectionString=${encodeURIComponent(connectionString)}`
         );
@@ -118,7 +253,6 @@ export default function CaseDocumentsPage({
         const caseResult = await caseResponse.json();
         setCaseData(caseResult);
 
-        // Fetch documents
         await fetchDocuments();
       } catch (err) {
         setError(err instanceof Error ? err.message : "An error occurred");
@@ -129,6 +263,110 @@ export default function CaseDocumentsPage({
 
     fetchData();
   }, [caseId, router, connectionString, apiKey, fetchDocuments]);
+
+  const handleUpload = async (files: File[], documentType: string) => {
+    if (!connectionString || !apiKey || !caseId) return;
+
+    const startIndex = uploadingFiles.length;
+    const newUploadingFiles = files.map(f => ({
+      name: f.name,
+      status: 'uploading' as const,
+      progress: 0,
+      statusMessage: 'Uploading...',
+    }));
+    setUploadingFiles(prev => [...prev, ...newUploadingFiles]);
+
+    for (let i = 0; i < files.length; i++) {
+      const file = files[i];
+      const fileIndex = startIndex + i;
+
+      try {
+        const formData = new FormData();
+        formData.append("file", file);
+        formData.append("caseId", caseId);
+        formData.append("documentType", documentType);
+
+        const response = await fetch(
+          `/api/documents/upload?connectionString=${encodeURIComponent(connectionString)}`,
+          {
+            method: "POST",
+            headers: { 'x-api-key': apiKey },
+            body: formData,
+          }
+        );
+
+        if (!response.ok) {
+          throw new Error("Upload failed");
+        }
+
+        const data = await response.json();
+
+        // Update status to processing and store document ID
+        setUploadingFiles(prev =>
+          prev.map((f, idx) =>
+            idx === fileIndex
+              ? {
+                  ...f,
+                  status: 'processing' as const,
+                  documentId: data.documentId,
+                  progress: 10,
+                  statusMessage: 'Processing document...',
+                }
+              : f
+          )
+        );
+
+        // Subscribe to SSE for real-time processing updates
+        subscribeToDocumentStatus(data.documentId, fileIndex);
+      } catch (err) {
+        setUploadingFiles(prev =>
+          prev.map((f, idx) => idx === fileIndex ? { ...f, status: 'error' as const } : f)
+        );
+      }
+    }
+
+    setUploadingType(null);
+  };
+
+  const handleQuickUpload = (type: string) => {
+    setUploadingType(type);
+    quickUploadRef.current?.click();
+  };
+
+  const handleQuickUploadChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    if (e.target.files && uploadingType) {
+      handleUpload(Array.from(e.target.files), uploadingType);
+    }
+    if (quickUploadRef.current) {
+      quickUploadRef.current.value = '';
+    }
+  };
+
+  const handleDragOver = (e: React.DragEvent) => {
+    e.preventDefault();
+    setIsDragging(true);
+  };
+
+  const handleDragLeave = (e: React.DragEvent) => {
+    e.preventDefault();
+    setIsDragging(false);
+  };
+
+  const handleDrop = (e: React.DragEvent) => {
+    e.preventDefault();
+    setIsDragging(false);
+    const files = Array.from(e.dataTransfer.files);
+    handleUpload(files, selectedUploadType);
+  };
+
+  const handleFileSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
+    if (e.target.files) {
+      handleUpload(Array.from(e.target.files), selectedUploadType);
+    }
+    if (fileInputRef.current) {
+      fileInputRef.current.value = '';
+    }
+  };
 
   const handleDownload = async (doc: Document) => {
     if (!connectionString) return;
@@ -149,7 +387,6 @@ export default function CaseDocumentsPage({
       const data = await response.json();
 
       if (data.downloadUrl) {
-        // Open download URL in new tab or trigger download
         const link = document.createElement('a');
         link.href = data.downloadUrl;
         link.download = data.filename || doc.fileName;
@@ -157,12 +394,9 @@ export default function CaseDocumentsPage({
         document.body.appendChild(link);
         link.click();
         document.body.removeChild(link);
-      } else {
-        alert('No download URL available for this document');
       }
     } catch (err) {
       console.error('Download error:', err);
-      alert('Failed to download document');
     } finally {
       setDownloadingId(null);
     }
@@ -217,13 +451,8 @@ export default function CaseDocumentsPage({
       throw new Error('Failed to delete document');
     }
 
-    // Refresh documents list
     await fetchDocuments();
     setDocumentToDelete(null);
-  };
-
-  const handleDocumentUploaded = () => {
-    fetchDocuments();
   };
 
   if (loading) {
@@ -263,25 +492,96 @@ export default function CaseDocumentsPage({
     invalid: documents.filter((d) => d.validationStatus === "invalid").length,
   };
 
-  // Required documents checklist
-  const requiredDocuments = [
-    { type: "tax_return", label: "Tax Returns (Last 2 Years)", required: true },
-    { type: "paystub", label: "Pay Stubs (Last 6 Months)", required: true },
-    { type: "bank_statement", label: "Bank Statements (Last 6 Months)", required: true },
-    { type: "mortgage", label: "Mortgage Statement or Lease", required: true },
-    { type: "vehicle_title", label: "Vehicle Titles & Loan Statements", required: false },
-    { type: "credit_card", label: "Credit Card Statements", required: true },
-    { type: "medical_bill", label: "Medical Bills", required: false },
-    { type: "utility", label: "Utility Bills", required: false },
-    { type: "insurance", label: "Insurance Policies", required: false },
-    { type: "retirement", label: "Retirement Account Statements", required: false },
-  ];
-
   const getDocumentsByType = (type: string) =>
     documents.filter((d) => d.documentType === type);
 
+  const missingRequiredDocs = REQUIRED_DOCUMENTS.filter(reqDoc => {
+    const uploadedDocs = getDocumentsByType(reqDoc.type);
+    return reqDoc.required && uploadedDocs.length === 0;
+  });
+
+  const missingDocTypes = missingRequiredDocs.map(d => d.type);
+
+  const handleGuidedUploadComplete = () => {
+    setShowGuidedUpload(false);
+    fetchDocuments();
+  };
+
+  const uploadedRequiredDocs = REQUIRED_DOCUMENTS.filter(reqDoc => {
+    const uploadedDocs = getDocumentsByType(reqDoc.type);
+    return uploadedDocs.length > 0;
+  });
+
+  const filteredDocuments = filterType === "all"
+    ? documents
+    : documents.filter(d => d.documentType === filterType);
+
+  const getDocTypeLabel = (type: string | null) => {
+    if (!type) return "Unknown";
+    const found = DOCUMENT_TYPES.find(dt => dt.value === type);
+    return found ? found.label : type.replace(/_/g, " ");
+  };
+
+  // Show guided upload wizard
+  if (showGuidedUpload && caseId) {
+    return (
+      <div className="min-h-screen bg-background">
+        <div className="container mx-auto p-6 max-w-3xl">
+          {/* Header */}
+          <div className="mb-8">
+            <div className="flex items-center gap-2 text-sm text-muted-foreground mb-2">
+              <Link href="/cases" className="hover:text-foreground">
+                Cases
+              </Link>
+              <ChevronRight className="w-4 h-4" />
+              <Link href={`/cases/${caseId}`} className="hover:text-foreground">
+                {caseData.clientName}
+              </Link>
+              <ChevronRight className="w-4 h-4" />
+              <Link href={`/cases/${caseId}/documents`} className="hover:text-foreground">
+                Documents
+              </Link>
+              <ChevronRight className="w-4 h-4" />
+              <span>Guided Upload</span>
+            </div>
+            <h1 className="text-3xl tracking-tight mb-2">Upload Required Documents</h1>
+            <p className="text-muted-foreground">
+              Complete the remaining {missingRequiredDocs.length} required document{missingRequiredDocs.length !== 1 ? 's' : ''} for this case
+            </p>
+          </div>
+
+          {/* Wizard Component */}
+          <DocumentUploadWizard
+            caseId={caseId}
+            onComplete={handleGuidedUploadComplete}
+            onSkip={() => setShowGuidedUpload(false)}
+            documentTypes={missingDocTypes}
+          />
+        </div>
+      </div>
+    );
+  }
+
   return (
-    <div className="container mx-auto p-6 max-w-7xl">
+    <div className="container mx-auto p-6 max-w-5xl">
+      {/* Hidden file inputs */}
+      <input
+        ref={quickUploadRef}
+        type="file"
+        className="hidden"
+        multiple
+        accept=".pdf,.jpg,.jpeg,.png,.doc,.docx"
+        onChange={handleQuickUploadChange}
+      />
+      <input
+        ref={fileInputRef}
+        type="file"
+        className="hidden"
+        multiple
+        accept=".pdf,.jpg,.jpeg,.png,.doc,.docx"
+        onChange={handleFileSelect}
+      />
+
       {/* Delete Confirmation Modal */}
       <DeleteConfirmationModal
         open={deleteModalOpen}
@@ -298,8 +598,8 @@ export default function CaseDocumentsPage({
             <div className="flex items-center justify-between p-4 border-b">
               <div>
                 <h2 className="text-lg font-semibold">{viewingDocument.fileName}</h2>
-                <p className="text-sm text-muted-foreground capitalize">
-                  {viewingDocument.documentType?.replace(/_/g, " ") || "Document"}
+                <p className="text-sm text-muted-foreground">
+                  {getDocTypeLabel(viewingDocument.documentType)} • Uploaded {new Date(viewingDocument.uploadedAt).toLocaleDateString()}
                 </p>
               </div>
               <div className="flex items-center gap-2">
@@ -350,7 +650,7 @@ export default function CaseDocumentsPage({
       )}
 
       {/* Header */}
-      <div className="mb-8">
+      <div className="mb-6">
         <div className="flex items-center gap-2 text-sm text-muted-foreground mb-2">
           <Link href="/cases" className="hover:text-foreground">
             Cases
@@ -368,257 +668,314 @@ export default function CaseDocumentsPage({
               <ArrowLeft className="h-4 w-4" />
             </Button>
             <div>
-              <h1 className="text-3xl font-bold tracking-tight">Documents</h1>
-              <p className="text-muted-foreground mt-1">
-                Manage and validate case documents
+              <h1 className="text-2xl font-semibold">Documents</h1>
+              <p className="text-muted-foreground text-sm">
+                Manage case documents
               </p>
             </div>
           </div>
         </div>
       </div>
 
-      {/* Stats Cards */}
-      <div className="grid grid-cols-1 md:grid-cols-4 gap-4 mb-8">
-        <div className="bg-card p-4 rounded-lg border">
-          <div className="flex items-center gap-3">
-            <div className="p-2 bg-blue-100 rounded-lg">
-              <FileText className="w-5 h-5 text-blue-600" />
-            </div>
-            <div>
-              <div className="text-2xl font-bold">{documentStats.total}</div>
-              <div className="text-sm text-muted-foreground">Total Documents</div>
-            </div>
-          </div>
-        </div>
-
-        <div className="bg-card p-4 rounded-lg border">
-          <div className="flex items-center gap-3">
-            <div className="p-2 bg-green-100 rounded-lg">
-              <CheckCircle className="w-5 h-5 text-green-600" />
-            </div>
-            <div>
-              <div className="text-2xl font-bold">{documentStats.valid}</div>
-              <div className="text-sm text-muted-foreground">Validated</div>
-            </div>
-          </div>
-        </div>
-
-        <div className="bg-card p-4 rounded-lg border">
-          <div className="flex items-center gap-3">
-            <div className="p-2 bg-yellow-100 rounded-lg">
-              <Clock className="w-5 h-5 text-yellow-600" />
-            </div>
-            <div>
-              <div className="text-2xl font-bold">{documentStats.pending}</div>
-              <div className="text-sm text-muted-foreground">Pending Review</div>
-            </div>
-          </div>
-        </div>
-
-        <div className="bg-card p-4 rounded-lg border">
-          <div className="flex items-center gap-3">
-            <div className="p-2 bg-red-100 rounded-lg">
-              <AlertCircle className="w-5 h-5 text-red-600" />
-            </div>
-            <div>
-              <div className="text-2xl font-bold">{documentStats.invalid}</div>
-              <div className="text-sm text-muted-foreground">Issues Found</div>
-            </div>
-          </div>
-        </div>
+      {/* Minimal Stats Row */}
+      <div className="flex items-center gap-6 text-sm mb-8 text-muted-foreground">
+        <span>{documentStats.total} total</span>
+        <span className="text-green-600">{documentStats.valid} validated</span>
+        <span className="text-yellow-600">{documentStats.pending} pending</span>
+        {documentStats.invalid > 0 && (
+          <span className="text-red-600">{documentStats.invalid} issues</span>
+        )}
       </div>
 
-      <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-        {/* Document Upload Section */}
-        <div className="lg:col-span-2 space-y-6">
-          <div className="bg-card p-6 rounded-lg border">
-            <div className="flex items-center gap-3 mb-6">
-              <Upload className="w-6 h-6 text-primary" />
+      {/* Required Documents Section */}
+      {missingRequiredDocs.length > 0 && (
+        <div className="mb-8">
+          <div className="flex items-center justify-between mb-4">
+            <h2 className="text-base font-medium tracking-wide text-foreground">Required Documents Needed</h2>
+            <Button
+              onClick={() => setShowGuidedUpload(true)}
+              className="gap-2"
+              size="sm"
+            >
+              <Sparkles className="w-4 h-4" />
+              Guided Upload
+            </Button>
+          </div>
+
+          {/* Guided Upload Banner */}
+          <div className="bg-accent/50 border border-primary/20 rounded-lg p-4 mb-4 flex items-center justify-between">
+            <div className="flex items-center gap-3">
+              <div className="p-2 bg-primary/10 rounded-lg">
+                <Sparkles className="w-5 h-5 text-primary" />
+              </div>
               <div>
-                <h2 className="text-xl font-semibold">Upload Documents</h2>
+                <p className="font-medium text-sm">Need help uploading?</p>
                 <p className="text-sm text-muted-foreground">
-                  Drag and drop or click to upload client documents
+                  Use guided upload to walk through each required document step by step
                 </p>
               </div>
             </div>
-            <DocumentUpload caseId={caseId!} onUploadComplete={handleDocumentUploaded} />
+            <Button
+              onClick={() => setShowGuidedUpload(true)}
+              variant="outline"
+              size="sm"
+              className="gap-2 border-primary/30 text-primary hover:bg-primary/10"
+            >
+              Start Guided Upload
+              <ChevronRight className="w-4 h-4" />
+            </Button>
           </div>
 
-          {/* All Documents List */}
-          <div className="bg-card p-6 rounded-lg border">
-            <div className="flex items-center justify-between mb-6">
-              <h2 className="text-xl font-semibold">All Documents</h2>
-              <div className="flex items-center gap-2">
-                <button className="p-2 hover:bg-muted rounded-lg transition-colors">
-                  <Search className="w-4 h-4" />
-                </button>
-                <button className="p-2 hover:bg-muted rounded-lg transition-colors">
-                  <Filter className="w-4 h-4" />
-                </button>
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+            {missingRequiredDocs.map((reqDoc) => (
+              <div
+                key={reqDoc.type}
+                className="flex items-center justify-between p-4 border border-amber-200 bg-amber-50/50 rounded-lg"
+              >
+                <div className="flex items-center gap-3">
+                  <div className="w-2 h-2 rounded-full bg-amber-500" />
+                  <span className="text-sm font-medium">{reqDoc.label}</span>
+                </div>
+                <Button
+                  size="sm"
+                  variant="outline"
+                  onClick={() => handleQuickUpload(reqDoc.type)}
+                  className="gap-2"
+                >
+                  <Upload className="w-4 h-4" />
+                  Upload
+                </Button>
               </div>
-            </div>
+            ))}
+          </div>
+        </div>
+      )}
 
-            {documents.length === 0 ? (
-              <div className="text-center py-12 text-muted-foreground">
-                <FileText className="w-12 h-12 mx-auto mb-4 opacity-50" />
-                <p>No documents uploaded yet</p>
-                <p className="text-sm">Upload documents using the form above</p>
-              </div>
-            ) : (
-              <div className="space-y-3">
-                {documents.map((doc) => (
-                  <div
-                    key={doc.id}
-                    className="flex items-center justify-between p-4 bg-muted/50 rounded-lg hover:bg-muted transition-colors"
-                  >
-                    <div className="flex items-center gap-4">
-                      <div className="p-2 bg-background rounded-lg">
-                        <FileText className="w-5 h-5 text-muted-foreground" />
-                      </div>
-                      <div>
-                        <p className="font-medium">{doc.fileName}</p>
-                        <div className="flex items-center gap-2 text-sm text-muted-foreground">
-                          <span className="capitalize">
-                            {doc.documentType?.replace(/_/g, " ") || "Unknown"}
-                          </span>
-                          <span>•</span>
-                          <span>{new Date(doc.uploadedAt).toLocaleDateString()}</span>
-                        </div>
-                      </div>
-                    </div>
-                    <div className="flex items-center gap-3">
-                      <span
-                        className={`text-xs px-2 py-1 rounded-full ${
-                          doc.validationStatus === "valid"
-                            ? "bg-green-100 text-green-700"
-                            : doc.validationStatus === "pending"
-                            ? "bg-yellow-100 text-yellow-700"
-                            : "bg-red-100 text-red-700"
-                        }`}
-                      >
-                        {doc.validationStatus}
+      {/* Completed Required Documents */}
+      {uploadedRequiredDocs.length > 0 && (
+        <div className="mb-8">
+          <h2 className="text-base font-medium tracking-wide text-foreground mb-4">Completed</h2>
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+            {uploadedRequiredDocs.map((reqDoc) => {
+              const uploadedDocs = getDocumentsByType(reqDoc.type);
+              const hasValid = uploadedDocs.some(d => d.validationStatus === "valid");
+              return (
+                <div
+                  key={reqDoc.type}
+                  className="flex items-center justify-between p-4 border border-green-200 bg-green-50/50 rounded-lg"
+                >
+                  <div className="flex items-center gap-3">
+                    <CheckCircle className="w-4 h-4 text-green-600" />
+                    <div>
+                      <span className="text-sm font-medium">{reqDoc.label}</span>
+                      <span className="text-xs text-muted-foreground ml-2">
+                        ({uploadedDocs.length} uploaded)
                       </span>
-                      <div className="flex items-center gap-1">
-                        <button
-                          onClick={() => handleView(doc)}
-                          className="p-2 hover:bg-background rounded-lg transition-colors"
-                          title="View"
-                        >
-                          <Eye className="w-4 h-4 text-muted-foreground" />
-                        </button>
-                        <button
-                          onClick={() => handleDownload(doc)}
-                          disabled={downloadingId === doc.id}
-                          className="p-2 hover:bg-background rounded-lg transition-colors disabled:opacity-50"
-                          title="Download"
-                        >
-                          {downloadingId === doc.id ? (
-                            <Loader2 className="w-4 h-4 animate-spin" />
-                          ) : (
-                            <Download className="w-4 h-4 text-muted-foreground" />
-                          )}
-                        </button>
-                        <button
-                          onClick={() => handleDeleteClick(doc)}
-                          className="p-2 hover:bg-background rounded-lg transition-colors text-red-500"
-                          title="Delete"
-                        >
-                          <Trash2 className="w-4 h-4" />
-                        </button>
-                      </div>
                     </div>
                   </div>
-                ))}
-              </div>
-            )}
-          </div>
-        </div>
-
-        {/* Required Documents Checklist */}
-        <div className="space-y-6">
-          <div className="bg-card p-6 rounded-lg border">
-            <h2 className="text-xl font-semibold mb-4">Required Documents</h2>
-            <p className="text-sm text-muted-foreground mb-6">
-              Checklist of documents needed for bankruptcy filing
-            </p>
-            <div className="space-y-3">
-              {requiredDocuments.map((reqDoc) => {
-                const uploadedDocs = getDocumentsByType(reqDoc.type);
-                const hasValid = uploadedDocs.some(
-                  (d) => d.validationStatus === "valid"
-                );
-                const hasPending = uploadedDocs.some(
-                  (d) => d.validationStatus === "pending"
-                );
-                const hasAny = uploadedDocs.length > 0;
-
-                return (
-                  <div
-                    key={reqDoc.type}
-                    className="flex items-center gap-3 p-3 rounded-lg bg-muted/50"
+                  <Button
+                    size="sm"
+                    variant="ghost"
+                    onClick={() => handleQuickUpload(reqDoc.type)}
+                    className="gap-2 text-muted-foreground"
                   >
-                    <div
-                      className={`w-5 h-5 rounded-full flex items-center justify-center ${
-                        hasValid
-                          ? "bg-green-500 text-white"
-                          : hasPending
-                          ? "bg-yellow-500 text-white"
-                          : hasAny
-                          ? "bg-red-500 text-white"
-                          : "bg-muted-foreground/20"
-                      }`}
-                    >
-                      {hasValid ? (
-                        <CheckCircle className="w-3 h-3" />
-                      ) : hasPending ? (
-                        <Clock className="w-3 h-3" />
-                      ) : hasAny ? (
-                        <AlertCircle className="w-3 h-3" />
-                      ) : null}
-                    </div>
-                    <div className="flex-1">
-                      <p className="text-sm font-medium">{reqDoc.label}</p>
-                      {hasAny && (
-                        <p className="text-xs text-muted-foreground">
-                          {uploadedDocs.length} uploaded
-                        </p>
-                      )}
-                    </div>
-                    {reqDoc.required && !hasValid && (
-                      <span className="text-xs text-red-500">Required</span>
-                    )}
-                  </div>
-                );
-              })}
-            </div>
-          </div>
-
-          {/* OCR Processing Info */}
-          <div className="bg-card p-6 rounded-lg border">
-            <h3 className="font-semibold mb-3">Automatic Processing</h3>
-            <p className="text-sm text-muted-foreground mb-4">
-              Documents are automatically processed using OCR and AI to extract:
-            </p>
-            <ul className="space-y-2 text-sm">
-              <li className="flex items-center gap-2">
-                <CheckCircle className="w-4 h-4 text-green-500" />
-                <span>Income information from pay stubs</span>
-              </li>
-              <li className="flex items-center gap-2">
-                <CheckCircle className="w-4 h-4 text-green-500" />
-                <span>Debt details from statements</span>
-              </li>
-              <li className="flex items-center gap-2">
-                <CheckCircle className="w-4 h-4 text-green-500" />
-                <span>Asset values from documents</span>
-              </li>
-              <li className="flex items-center gap-2">
-                <CheckCircle className="w-4 h-4 text-green-500" />
-                <span>Expense data from bills</span>
-              </li>
-            </ul>
+                    <Upload className="w-4 h-4" />
+                    Add more
+                  </Button>
+                </div>
+              );
+            })}
           </div>
         </div>
+      )}
+
+      {/* Upload Section */}
+      <div className="mb-8">
+        <h2 className="text-base font-medium tracking-wide text-foreground mb-4">Upload Documents</h2>
+
+        {/* Document Type Selection */}
+        <div className="mb-4 max-w-xs">
+          <Label htmlFor="uploadType" className="mb-2 block">Document Type</Label>
+          <select
+            id="uploadType"
+            value={selectedUploadType}
+            onChange={(e) => setSelectedUploadType(e.target.value)}
+            className="flex h-11 w-full rounded-xl border border-input bg-background px-4 py-2.5 text-sm ring-offset-background focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+          >
+            {DOCUMENT_TYPES.map((type) => (
+              <option key={type.value} value={type.value}>
+                {type.label}
+              </option>
+            ))}
+          </select>
+        </div>
+
+        {/* Drop Zone */}
+        <div
+          onDragOver={handleDragOver}
+          onDragLeave={handleDragLeave}
+          onDrop={handleDrop}
+          className={`border-2 border-dashed rounded-lg p-8 text-center transition-colors ${
+            isDragging
+              ? "border-primary bg-primary/5"
+              : "border-border hover:border-muted-foreground"
+          }`}
+        >
+          <Upload className="w-10 h-10 mx-auto mb-3 text-muted-foreground" />
+          <p className="font-medium mb-1">Drop files here</p>
+          <p className="text-sm text-muted-foreground mb-4">or click to browse</p>
+          <Button onClick={() => fileInputRef.current?.click()}>
+            Select Files
+          </Button>
+          <p className="text-xs text-muted-foreground mt-4">
+            PDF, JPG, PNG, DOC, DOCX (Max 10MB each)
+          </p>
+        </div>
+
+        {/* Upload Progress */}
+        {uploadingFiles.length > 0 && (
+          <div className="mt-4 space-y-2">
+            {uploadingFiles.map((file, idx) => (
+              <div key={idx} className="p-3 bg-muted/50 rounded-lg space-y-2">
+                <div className="flex items-center gap-3">
+                  <FileText className="w-4 h-4 text-muted-foreground" />
+                  <span className="flex-1 text-sm truncate">{file.name}</span>
+                  {file.status === 'uploading' && (
+                    <span className="text-xs text-blue-600 flex items-center gap-1">
+                      <Loader2 className="w-3 h-3 animate-spin" /> Uploading
+                    </span>
+                  )}
+                  {file.status === 'processing' && (
+                    <span className="text-xs text-amber-600 flex items-center gap-1">
+                      <Loader2 className="w-3 h-3 animate-spin" /> {file.statusMessage || 'Processing'}
+                    </span>
+                  )}
+                  {file.status === 'validating' && (
+                    <span className="text-xs text-blue-600 flex items-center gap-1">
+                      <Loader2 className="w-3 h-3 animate-spin" /> {file.statusMessage || 'Validating'}
+                    </span>
+                  )}
+                  {file.status === 'done' && (
+                    <span className="text-xs text-green-600 flex items-center gap-1">
+                      <CheckCircle className="w-3 h-3" /> Done
+                    </span>
+                  )}
+                  {file.status === 'error' && (
+                    <span className="text-xs text-red-600 flex items-center gap-1">
+                      <AlertCircle className="w-3 h-3" /> Failed
+                    </span>
+                  )}
+                </div>
+                {/* Progress bar for processing files */}
+                {(file.status === 'processing' || file.status === 'validating') && (
+                  <div className="w-full bg-muted rounded-full h-1.5">
+                    <div
+                      className="bg-primary h-1.5 rounded-full transition-all duration-500"
+                      style={{ width: `${file.progress || 0}%` }}
+                    />
+                  </div>
+                )}
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
+
+      {/* Uploaded Documents List */}
+      <div>
+        <div className="flex items-center justify-between mb-4">
+          <h2 className="text-base font-medium tracking-wide text-foreground">Uploaded Documents</h2>
+
+          {/* Filter Dropdown */}
+          <div className="flex items-center gap-2">
+            <Filter className="w-4 h-4 text-muted-foreground" />
+            <select
+              value={filterType}
+              onChange={(e) => setFilterType(e.target.value)}
+              className="text-sm border border-input rounded-lg px-3 py-1.5 bg-background focus:outline-none focus:ring-2 focus:ring-ring"
+            >
+              <option value="all">All Types</option>
+              {DOCUMENT_TYPES.map((type) => (
+                <option key={type.value} value={type.value}>
+                  {type.label}
+                </option>
+              ))}
+            </select>
+          </div>
+        </div>
+
+        {filteredDocuments.length === 0 ? (
+          <div className="text-center py-12 text-muted-foreground border border-dashed rounded-lg">
+            <FileText className="w-10 h-10 mx-auto mb-3 opacity-50" />
+            <p className="font-medium">No documents {filterType !== "all" ? "of this type" : "uploaded yet"}</p>
+            <p className="text-sm">Upload documents using the form above</p>
+          </div>
+        ) : (
+          <div className="space-y-2">
+            {filteredDocuments.map((doc) => (
+              <div
+                key={doc.id}
+                className="flex items-center justify-between p-4 border rounded-lg hover:bg-muted/30 transition-colors cursor-pointer group"
+                onClick={() => handleView(doc)}
+              >
+                <div className="flex items-center gap-4 min-w-0">
+                  <div className="p-2 bg-muted rounded-lg group-hover:bg-background transition-colors">
+                    <FileText className="w-5 h-5 text-muted-foreground" />
+                  </div>
+                  <div className="min-w-0">
+                    <p className="font-medium truncate">{doc.fileName}</p>
+                    <div className="flex items-center gap-2 text-sm text-muted-foreground">
+                      <span>{getDocTypeLabel(doc.documentType)}</span>
+                      <span>•</span>
+                      <span>{new Date(doc.uploadedAt).toLocaleDateString()}</span>
+                    </div>
+                  </div>
+                </div>
+                <div className="flex items-center gap-3">
+                  <span
+                    className={`text-xs px-2 py-1 rounded-full ${
+                      doc.validationStatus === "valid"
+                        ? "bg-green-100 text-green-700"
+                        : doc.validationStatus === "pending"
+                        ? "bg-yellow-100 text-yellow-700"
+                        : "bg-red-100 text-red-700"
+                    }`}
+                  >
+                    {doc.validationStatus}
+                  </span>
+                  <div className="flex items-center gap-1" onClick={(e) => e.stopPropagation()}>
+                    <button
+                      onClick={() => handleView(doc)}
+                      className="p-2 hover:bg-muted rounded-lg transition-colors"
+                      title="View"
+                    >
+                      <Eye className="w-4 h-4 text-muted-foreground" />
+                    </button>
+                    <button
+                      onClick={() => handleDownload(doc)}
+                      disabled={downloadingId === doc.id}
+                      className="p-2 hover:bg-muted rounded-lg transition-colors disabled:opacity-50"
+                      title="Download"
+                    >
+                      {downloadingId === doc.id ? (
+                        <Loader2 className="w-4 h-4 animate-spin" />
+                      ) : (
+                        <Download className="w-4 h-4 text-muted-foreground" />
+                      )}
+                    </button>
+                    <button
+                      onClick={() => handleDeleteClick(doc)}
+                      className="p-2 hover:bg-muted rounded-lg transition-colors text-red-500"
+                      title="Delete"
+                    >
+                      <Trash2 className="w-4 h-4" />
+                    </button>
+                  </div>
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
       </div>
     </div>
   );

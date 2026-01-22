@@ -126,7 +126,19 @@ export class CaseDevClient {
    * List all vaults
    */
   async listVaults(): Promise<Array<{ id: string; name: string }>> {
-    return this.request('/vault', { method: 'GET' });
+    const response = await this.request<any>('/vault', { method: 'GET' });
+    // Handle both array response and object with vaults/data property
+    if (Array.isArray(response)) {
+      return response;
+    }
+    if (response && Array.isArray(response.vaults)) {
+      return response.vaults;
+    }
+    if (response && Array.isArray(response.data)) {
+      return response.data;
+    }
+    // Return empty array if response format is unexpected
+    return [];
   }
 
   /**
@@ -333,7 +345,7 @@ export class CaseDevClient {
     temperature?: number;
     response_format?: { type: string };
   }): Promise<LLMChatCompletionResponse> {
-    return this.request<LLMChatCompletionResponse>('/llms/v1/chat/completions', {
+    return this.request<LLMChatCompletionResponse>('/llm/v1/chat/completions', {
       method: 'POST',
       body: JSON.stringify(params),
     });

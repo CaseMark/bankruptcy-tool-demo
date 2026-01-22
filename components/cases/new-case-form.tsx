@@ -78,8 +78,8 @@ export function NewCaseForm() {
         // Redirect to the specific feature page for the new case
         router.push(`/cases/${caseId}/${postCreateRedirect}`);
       } else {
-        // Default: redirect to the new case detail page
-        router.push(`/cases/${caseId}`);
+        // Default: redirect to case created page (prompts for document upload)
+        router.push(`/cases/${caseId}/created`);
       }
     } catch (err) {
       setError(err instanceof Error ? err.message : "An error occurred");
@@ -92,7 +92,7 @@ export function NewCaseForm() {
   };
 
   return (
-    <form onSubmit={handleSubmit} className="space-y-8">
+    <form onSubmit={handleSubmit} className="space-y-10">
       {error && (
         <div className="flex items-center gap-2 p-4 bg-destructive/10 text-destructive rounded-lg">
           <AlertCircle className="w-4 h-4" />
@@ -101,8 +101,8 @@ export function NewCaseForm() {
       )}
 
       {/* Case Type Selection */}
-      <div className="space-y-4 bg-card p-6 rounded-lg border">
-        <h2 className="text-lg font-semibold">Case Type</h2>
+      <div className="space-y-6 bg-card p-8 rounded-lg border">
+        <h2 className="text-xl font-semibold">Case Type</h2>
 
         <div className="space-y-4">
           <div>
@@ -112,11 +112,11 @@ export function NewCaseForm() {
               onValueChange={(value) => updateFormData("caseType", value)}
               className="space-y-3"
             >
-              <div className="flex items-start space-x-3 p-4 border rounded-lg hover:bg-accent">
+              <div className="flex items-start space-x-3 p-4 border border-border rounded hover:bg-accent">
                 <RadioGroupItem value="chapter7" id="chapter7" className="mt-1" />
                 <div className="flex-1">
                   <label htmlFor="chapter7" className="cursor-pointer">
-                    <div className="font-medium">Chapter 7</div>
+                    <div className="font-medium text-foreground">Chapter 7</div>
                     <p className="text-sm text-muted-foreground">
                       Liquidation bankruptcy - typically 4-6 months
                     </p>
@@ -124,7 +124,7 @@ export function NewCaseForm() {
                 </div>
               </div>
 
-              <div className="flex items-start space-x-3 p-4 border rounded-lg hover:bg-accent opacity-50 cursor-not-allowed">
+              <div className="flex items-start space-x-3 p-4 border border-border rounded hover:bg-accent opacity-50 cursor-not-allowed">
                 <RadioGroupItem
                   value="chapter13"
                   id="chapter13"
@@ -133,9 +133,9 @@ export function NewCaseForm() {
                 />
                 <div className="flex-1">
                   <label htmlFor="chapter13" className="cursor-not-allowed">
-                    <div className="font-medium flex items-center gap-2">
+                    <div className="font-medium flex items-center gap-2 text-foreground">
                       Chapter 13
-                      <span className="text-xs bg-yellow-100 text-yellow-700 px-2 py-0.5 rounded-full">
+                      <span className="text-xs bg-accent text-primary px-2 py-0.5 rounded">
                         Coming Soon
                       </span>
                     </div>
@@ -173,11 +173,11 @@ export function NewCaseForm() {
       </div>
 
       {/* Client Information */}
-      <div className="space-y-4 bg-card p-6 rounded-lg border">
-        <h2 className="text-lg font-semibold">Client Information</h2>
+      <div className="space-y-6 bg-card p-8 rounded-lg border">
+        <h2 className="text-xl font-semibold">Client Information</h2>
 
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-          <div className="md:col-span-2">
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+          <div className="md:col-span-2 space-y-2">
             <Label htmlFor="clientName">
               Full Name <span className="text-destructive">*</span>
             </Label>
@@ -190,7 +190,7 @@ export function NewCaseForm() {
             />
           </div>
 
-          <div>
+          <div className="space-y-2">
             <Label htmlFor="clientEmail">
               Email <span className="text-destructive">*</span>
             </Label>
@@ -204,7 +204,7 @@ export function NewCaseForm() {
             />
           </div>
 
-          <div>
+          <div className="space-y-2">
             <Label htmlFor="clientPhone">
               Phone <span className="text-destructive">*</span>
             </Label>
@@ -218,7 +218,7 @@ export function NewCaseForm() {
             />
           </div>
 
-          <div>
+          <div className="space-y-2">
             <Label htmlFor="ssnLast4">
               SSN Last 4 Digits <span className="text-destructive">*</span>
             </Label>
@@ -236,7 +236,7 @@ export function NewCaseForm() {
             />
           </div>
 
-          <div>
+          <div className="space-y-2">
             <Label htmlFor="householdSize">
               Household Size <span className="text-destructive">*</span>
             </Label>
@@ -254,11 +254,11 @@ export function NewCaseForm() {
       </div>
 
       {/* Address Information */}
-      <div className="space-y-4 bg-card p-6 rounded-lg border">
-        <h2 className="text-lg font-semibold">Address</h2>
+      <div className="space-y-6 bg-card p-8 rounded-lg border">
+        <h2 className="text-xl font-semibold">Address</h2>
 
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-          <div className="md:col-span-2">
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+          <div className="md:col-span-2 space-y-2">
             <Label htmlFor="address">
               Street Address <span className="text-destructive">*</span>
             </Label>
@@ -271,7 +271,7 @@ export function NewCaseForm() {
             />
           </div>
 
-          <div>
+          <div className="space-y-2">
             <Label htmlFor="city">
               City <span className="text-destructive">*</span>
             </Label>
@@ -284,7 +284,7 @@ export function NewCaseForm() {
             />
           </div>
 
-          <div>
+          <div className="space-y-2">
             <Label htmlFor="state">
               State <span className="text-destructive">*</span>
             </Label>
@@ -292,7 +292,7 @@ export function NewCaseForm() {
               id="state"
               value={formData.state}
               onChange={(e) => updateFormData("state", e.target.value)}
-              className="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm ring-offset-background focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+              className="flex h-11 w-full rounded border border-input bg-background px-4 py-2.5 text-sm ring-offset-background focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
               required
             >
               <option value="">Select State</option>
@@ -304,7 +304,7 @@ export function NewCaseForm() {
             </select>
           </div>
 
-          <div>
+          <div className="space-y-2">
             <Label htmlFor="zip">
               ZIP Code <span className="text-destructive">*</span>
             </Label>
@@ -317,7 +317,7 @@ export function NewCaseForm() {
             />
           </div>
 
-          <div>
+          <div className="space-y-2">
             <Label htmlFor="county">
               County <span className="text-destructive">*</span>
             </Label>

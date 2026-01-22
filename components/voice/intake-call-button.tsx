@@ -1,0 +1,204 @@
+"use client";
+
+import { useState, useEffect } from "react";
+import { Phone, PhoneOff, Mic, MicOff, Loader2, X } from "lucide-react";
+import { Button } from "@/components/ui/button";
+import { useVapi } from "@/app/hooks/useVapi";
+
+interface IntakeCallButtonProps {
+  className?: string;
+}
+
+export function IntakeCallButton({ className }: IntakeCallButtonProps) {
+  const [isOpen, setIsOpen] = useState(false);
+  const [connectionString, setConnectionString] = useState<string | null>(null);
+
+  const {
+    startCall,
+    endCall,
+    isSessionActive,
+    isLoading,
+    isSpeaking,
+    error,
+    transcripts,
+    volumeLevel,
+    clearError,
+  } = useVapi({
+    publicKey: process.env.NEXT_PUBLIC_VAPI_PUBLIC_KEY || "",
+    assistantId: process.env.NEXT_PUBLIC_VAPI_ASSISTANT_ID || "",
+  });
+
+  useEffect(() => {
+    const stored = localStorage.getItem("bankruptcy_db_connection");
+    setConnectionString(stored);
+  }, []);
+
+  const handleStartCall = async () => {
+    setIsOpen(true);
+    clearError();
+
+    // Pass connection string as metadata so webhook can access the database
+    await startCall({
+      metadata: {
+        connectionString: connectionString,
+      },
+    });
+  };
+
+  const handleEndCall = () => {
+    endCall();
+  };
+
+  const handleClose = () => {
+    if (isSessionActive) {
+      endCall();
+    }
+    setIsOpen(false);
+  };
+
+  // Get only final transcripts for display
+  const finalTranscripts = transcripts.filter((t) => t.isFinal);
+
+  return (
+    <>
+      {/* Call Button */}
+      <Button
+        onClick={handleStartCall}
+        disabled={isLoading || isSessionActive}
+        variant="outline"
+        className={className}
+      >
+        {isLoading ? (
+          <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+        ) : isSessionActive ? (
+          <Phone className="w-4 h-4 mr-2 text-green-500" />
+        ) : (
+          <Phone className="w-4 h-4 mr-2" />
+        )}
+        {isSessionActive ? "Call Active" : "Call for Intake"}
+      </Button>
+
+      {/* Call Modal */}
+      {isOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50">
+          <div className="bg-background rounded-xl shadow-2xl w-full max-w-md mx-4 overflow-hidden">
+            {/* Header */}
+            <div className="bg-primary p-4 flex items-center justify-between">
+              <div className="flex items-center gap-3">
+                <div
+                  className={`w-10 h-10 rounded-full flex items-center justify-center ${
+                    isSessionActive ? "bg-white/20" : "bg-white/10"
+                  }`}
+                >
+                  {isSpeaking ? (
+                    <Mic className="w-5 h-5 text-white animate-pulse" />
+                  ) : (
+                    <Phone className="w-5 h-5 text-white" />
+                  )}
+                </div>
+                <div>
+                  <h3 className="text-white font-semibold">Client Intake</h3>
+                  <p className="text-white/70 text-sm">
+                    {isLoading
+                      ? "Connecting..."
+                      : isSessionActive
+                        ? isSpeaking
+                          ? "Assistant speaking..."
+                          : "Listening..."
+                        : "Ready to call"}
+                  </p>
+                </div>
+              </div>
+              <button
+                onClick={handleClose}
+                className="text-white/70 hover:text-white p-1"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            {/* Volume indicator */}
+            {isSessionActive && (
+              <div className="h-1 bg-primary/20">
+                <div
+                  className="h-full bg-primary transition-all duration-100"
+                  style={{ width: `${volumeLevel * 100}%` }}
+                />
+              </div>
+            )}
+
+            {/* Transcript */}
+            <div className="h-64 overflow-y-auto p-4 space-y-3">
+              {finalTranscripts.length === 0 && !error && (
+                <div className="text-center text-muted-foreground py-8">
+                  {isLoading ? (
+                    <div className="flex flex-col items-center gap-2">
+                      <Loader2 className="w-8 h-8 animate-spin" />
+                      <p>Connecting to assistant...</p>
+                    </div>
+                  ) : isSessionActive ? (
+                    <p>Waiting for conversation to begin...</p>
+                  ) : (
+                    <p>Click the button below to start the intake call</p>
+                  )}
+                </div>
+              )}
+
+              {error && (
+                <div className="bg-red-50 border border-red-200 rounded-lg p-3 text-red-700 text-sm">
+                  {error}
+                </div>
+              )}
+
+              {finalTranscripts.map((transcript, index) => (
+                <div
+                  key={index}
+                  className={`flex ${
+                    transcript.role === "user" ? "justify-end" : "justify-start"
+                  }`}
+                >
+                  <div
+                    className={`max-w-[80%] rounded-lg px-3 py-2 text-sm ${
+                      transcript.role === "user"
+                        ? "bg-primary text-white"
+                        : "bg-muted text-foreground"
+                    }`}
+                  >
+                    {transcript.text}
+                  </div>
+                </div>
+              ))}
+            </div>
+
+            {/* Actions */}
+            <div className="p-4 border-t bg-muted/30">
+              {isSessionActive ? (
+                <Button
+                  onClick={handleEndCall}
+                  variant="destructive"
+                  className="w-full"
+                >
+                  <PhoneOff className="w-4 h-4 mr-2" />
+                  End Call
+                </Button>
+              ) : (
+                <Button
+                  onClick={handleStartCall}
+                  disabled={isLoading}
+                  className="w-full"
+                >
+                  {isLoading ? (
+                    <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+                  ) : (
+                    <Phone className="w-4 h-4 mr-2" />
+                  )}
+                  {isLoading ? "Connecting..." : "Start Call"}
+                </Button>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
+    </>
+  );
+}
