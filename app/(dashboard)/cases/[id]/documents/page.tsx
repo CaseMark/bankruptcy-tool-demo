@@ -16,8 +16,10 @@ import {
   Trash2,
   Loader2,
   X,
+  ArrowLeft,
 } from "lucide-react";
 import Link from "next/link";
+import { Button } from "@/components/ui/button";
 import { DocumentUpload } from "@/components/cases/document-upload";
 import { DeleteConfirmationModal } from "@/components/cases/financial/delete-confirmation-modal";
 
@@ -361,11 +363,16 @@ export default function CaseDocumentsPage({
           <span>Documents</span>
         </div>
         <div className="flex items-center justify-between">
-          <div>
-            <h1 className="text-3xl font-bold tracking-tight">Documents</h1>
-            <p className="text-muted-foreground mt-1">
-              Manage and validate case documents
-            </p>
+          <div className="flex items-center gap-4">
+            <Button variant="outline" size="icon" onClick={() => router.push(`/cases/${caseId}`)}>
+              <ArrowLeft className="h-4 w-4" />
+            </Button>
+            <div>
+              <h1 className="text-3xl font-bold tracking-tight">Documents</h1>
+              <p className="text-muted-foreground mt-1">
+                Manage and validate case documents
+              </p>
+            </div>
           </div>
         </div>
       </div>

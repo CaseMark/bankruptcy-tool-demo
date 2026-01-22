@@ -174,6 +174,69 @@ When working on this codebase:
 3. **Test Changes**: Verify changes don't break existing functionality
 4. **Document**: Update SKILL.md files when adding new patterns
 5. **Type Safety**: Ensure all new code is properly typed
+6. **Avoid Conflicts**: See collaboration guidelines below
+
+### Avoiding Merge Conflicts
+
+**IMPORTANT**: Multiple engineers may be working on this codebase in parallel. Follow these guidelines to minimize merge conflicts:
+
+#### Work in Isolated Directories
+
+This project has designated zones for different workstreams:
+
+**Chapter 7 Functionality:**
+- `lib/bankruptcy/chapter7/` - Chapter 7 calculations and logic
+- `app/(dashboard)/cases/[id]/means-test/` - Means test UI
+- `components/cases/chapter7/` - Chapter 7 specific components
+
+**Vapi Voice Integration:**
+- `lib/vapi/` - Voice input and transcription
+- `components/vapi/` - Voice UI components
+- `app/api/vapi/` - Voice API endpoints
+
+**Shared/High-Conflict Files** (coordinate before modifying):
+- `lib/db/schema.ts` - Database schema (announce changes immediately)
+- `components/cases/new-case-form.tsx` - Case creation form
+- `components/cases/financial/*-modal.tsx` - Financial forms
+- `package.json` - Dependencies
+
+#### Best Practices
+
+1. **Stay in your zone**: Work in your designated directories 80% of the time
+2. **Announce shared file changes**: Before modifying shared files, communicate with the team
+3. **Use composition over modification**: Wrap components instead of modifying them directly
+4. **Coordinate database changes**: Use separate, numbered migration files
+5. **Pull frequently**: Pull from main before starting work each day
+6. **Small PRs**: Keep pull requests small (< 500 lines) for easier merges
+7. **Merge often**: Push isolated work to main daily if possible
+
+#### Component Composition Pattern
+
+When adding features to existing components, use composition:
+
+```tsx
+// ❌ DON'T modify existing components directly
+export function ExistingForm() {
+  // Adding new feature here = conflict risk
+}
+
+// ✅ DO wrap with new functionality
+export function EnhancedForm({ children }) {
+  return (
+    <>
+      <NewFeature />
+      {children}
+    </>
+  );
+}
+
+// Usage
+<EnhancedForm>
+  <ExistingForm />
+</EnhancedForm>
+```
+
+**For detailed collaboration guidelines, see [COLLABORATION.md](./COLLABORATION.md)**
 
 ### Common Tasks
 

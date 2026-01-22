@@ -16,12 +16,23 @@ import {
   Gavel,
   BarChart3,
   Users,
-  Shield
+  Shield,
+  Trash2
 } from 'lucide-react';
 import Link from 'next/link';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Alert, AlertDescription } from '@/components/ui/alert';
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from '@/components/ui/alert-dialog';
 import { initializeDatabase, hasDatabase } from '@/lib/database/provision';
 import { CaseSelectorModal } from '@/components/cases/case-selector-modal';
 
@@ -87,6 +98,48 @@ export default function CasesPage() {
   const [dbError, setDbError] = useState<string | null>(null);
   const [dbReady, setDbReady] = useState(false);
   const [cases, setCases] = useState<any[]>([]);
+  const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
+  const [caseToDelete, setCaseToDelete] = useState<{ id: string; clientName: string } | null>(null);
+  const [deleting, setDeleting] = useState(false);
+
+  const handleDeleteCase = async () => {
+    if (!caseToDelete) return;
+    
+    setDeleting(true);
+    try {
+      const connectionString = localStorage.getItem('bankruptcy_db_connection');
+      if (!connectionString) {
+        console.error('No database connection found');
+        return;
+      }
+
+      const response = await fetch(
+        `/api/cases/${caseToDelete.id}?connectionString=${encodeURIComponent(connectionString)}`,
+        { method: 'DELETE' }
+      );
+
+      if (response.ok) {
+        // Remove the case from the local state
+        setCases(cases.filter(c => c.id !== caseToDelete.id));
+      } else {
+        const data = await response.json();
+        console.error('Failed to delete case:', data.error);
+      }
+    } catch (error) {
+      console.error('Error deleting case:', error);
+    } finally {
+      setDeleting(false);
+      setDeleteDialogOpen(false);
+      setCaseToDelete(null);
+    }
+  };
+
+  const openDeleteDialog = (e: React.MouseEvent, caseItem: { id: string; clientName: string }) => {
+    e.preventDefault();
+    e.stopPropagation();
+    setCaseToDelete(caseItem);
+    setDeleteDialogOpen(true);
+  };
   const [selectedFeature, setSelectedFeature] = useState<FeatureConfig | null>(null);
   const [modalOpen, setModalOpen] = useState(false);
 
@@ -231,36 +284,143 @@ export default function CasesPage() {
             </CardContent>
           </Card>
         ) : (
-          /* Cases List */
-          <div className="space-y-4">
-            {cases.map((c) => (
-              <Link key={c.id} href={`/cases/${c.id}`}>
-                <Card className="hover:shadow-md transition-shadow cursor-pointer hover:border-primary/50">
-                  <CardHeader>
-                    <div className="flex items-center justify-between">
-                      <div>
-                        <CardTitle>{c.clientName}</CardTitle>
-                        <CardDescription>
-                          {c.caseType === 'chapter7' ? 'Chapter 7' : 'Chapter 13'} • {c.filingType === 'individual' ? 'Individual' : 'Joint'}
-                        </CardDescription>
+          /* Cases List - Enhanced Grid Layout */
+          <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-6">
+            {cases.map((c) => {
+              // Generate initials for avatar
+              const initials = c.clientName
+                ?.split(' ')
+                .map((n: string) => n[0])
+                .join('')
+                .toUpperCase()
+                .slice(0, 2) || '??';
+              
+              // Generate a consistent color based on client name
+              const colors = [
+                'bg-blue-500', 'bg-purple-500', 'bg-green-500', 
+                'bg-orange-500', 'bg-pink-500', 'bg-indigo-500',
+                'bg-teal-500', 'bg-cyan-500'
+              ];
+              const colorIndex = c.clientName?.charCodeAt(0) % colors.length || 0;
+              const avatarColor = colors[colorIndex];
+
+              // Format status with proper capitalization
+              const formatStatus = (status: string) => {
+                if (!status) return 'Intake';
+                return status.charAt(0).toUpperCase() + status.slice(1).toLowerCase();
+              };
+
+              // Get status color
+              const getStatusStyle = (status: string) => {
+                const s = status?.toLowerCase() || 'intake';
+                switch (s) {
+                  case 'intake':
+                    return 'bg-blue-100 text-blue-700 border-blue-200';
+                  case 'active':
+                    return 'bg-green-100 text-green-700 border-green-200';
+                  case 'pending':
+                    return 'bg-yellow-100 text-yellow-700 border-yellow-200';
+                  case 'filed':
+                    return 'bg-purple-100 text-purple-700 border-purple-200';
+                  case 'closed':
+                    return 'bg-gray-100 text-gray-700 border-gray-200';
+                  default:
+                    return 'bg-blue-100 text-blue-700 border-blue-200';
+                }
+              };
+
+              return (
+                <Link key={c.id} href={`/cases/${c.id}`}>
+                  <Card className="hover:shadow-lg transition-all duration-200 cursor-pointer hover:border-primary/50 hover:-translate-y-1 h-full">
+                    <CardContent className="p-5">
+                      {/* Top Section: Avatar + Name + Status */}
+                      <div className="flex items-start gap-3 mb-3">
+                        {/* Profile Avatar */}
+                        <div className={`w-12 h-12 rounded-full ${avatarColor} flex items-center justify-center flex-shrink-0 shadow-md`}>
+                          <span className="text-white font-semibold text-base">{initials}</span>
+                        </div>
+                        
+                        {/* Name and Case Type */}
+                        <div className="flex-1 min-w-0">
+                          <h3 className="font-semibold text-lg text-gray-900 truncate">{c.clientName}</h3>
+                          <p className="text-sm text-muted-foreground">
+                            {c.caseType === 'chapter7' ? 'Chapter 7' : 'Chapter 13'} Bankruptcy
+                          </p>
+                        </div>
+
+                        {/* Delete Button */}
+                        <Button
+                          variant="ghost"
+                          size="icon"
+                          className="h-8 w-8 text-muted-foreground hover:text-destructive hover:bg-destructive/10 flex-shrink-0"
+                          onClick={(e) => openDeleteDialog(e, { id: c.id, clientName: c.clientName })}
+                        >
+                          <Trash2 className="w-4 h-4" />
+                        </Button>
                       </div>
-                      <div className="flex items-center gap-2">
-                        <span className="px-3 py-1 rounded-full text-xs font-medium bg-blue-100 text-blue-700">
-                          {c.status}
+
+                      {/* Divider */}
+                      <div className="border-t border-gray-100 my-3" />
+
+                      {/* Case Details Grid */}
+                      <div className="grid grid-cols-2 gap-2 text-sm">
+                        <div className="flex items-center gap-2">
+                          <Users className="w-4 h-4 text-muted-foreground" />
+                          <span className="text-gray-600">
+                            {c.filingType === 'individual' ? 'Individual' : 'Joint Filing'}
+                          </span>
+                        </div>
+                        <div className="flex items-center gap-2">
+                          <Calendar className="w-4 h-4 text-muted-foreground" />
+                          <span className="text-gray-600">
+                            {new Date(c.createdAt).toLocaleDateString('en-US', { 
+                              month: 'short', 
+                              day: 'numeric',
+                              year: 'numeric'
+                            })}
+                          </span>
+                        </div>
+                      </div>
+
+                      {/* Bottom Section: Status Badge */}
+                      <div className="mt-4 flex items-center justify-between">
+                        <span className={`px-3 py-1.5 rounded-full text-xs font-medium border ${getStatusStyle(c.status)}`}>
+                          {formatStatus(c.status)}
+                        </span>
+                        <span className="text-xs text-muted-foreground">
+                          Case #{c.id?.slice(-6).toUpperCase() || 'N/A'}
                         </span>
                       </div>
-                    </div>
-                  </CardHeader>
-                  <CardContent>
-                    <div className="text-sm text-muted-foreground">
-                      Created: {new Date(c.createdAt).toLocaleDateString()}
-                    </div>
-                  </CardContent>
-                </Card>
-              </Link>
-            ))}
+                    </CardContent>
+                  </Card>
+                </Link>
+              );
+            })}
           </div>
         )}
+
+        {/* Delete Confirmation Dialog */}
+        <AlertDialog open={deleteDialogOpen} onOpenChange={setDeleteDialogOpen}>
+          <AlertDialogContent>
+            <AlertDialogHeader>
+              <AlertDialogTitle>Delete Case</AlertDialogTitle>
+              <AlertDialogDescription>
+                Are you sure you want to delete the case for <strong>{caseToDelete?.clientName}</strong>? 
+                This action cannot be undone and will permanently remove all case data, documents, and forms.
+              </AlertDialogDescription>
+            </AlertDialogHeader>
+            <AlertDialogFooter>
+              <AlertDialogCancel disabled={deleting}>Cancel</AlertDialogCancel>
+              <AlertDialogAction
+                onClick={handleDeleteCase}
+                disabled={deleting}
+                className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+              >
+                {deleting ? 'Deleting...' : 'Delete Case'}
+              </AlertDialogAction>
+            </AlertDialogFooter>
+          </AlertDialogContent>
+        </AlertDialog>
 
         {/* Features Grid */}
         <div className="mt-12">
