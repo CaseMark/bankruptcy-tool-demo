@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import { useState, useEffect, useCallback } from "react";
 import { useRouter } from "next/navigation";
 import {
   FileText,
@@ -17,8 +17,11 @@ import {
   FilePlus,
   Loader2,
   Info,
+  X,
 } from "lucide-react";
 import Link from "next/link";
+import JSZip from "jszip";
+import { saveAs } from "file-saver";
 
 interface BankruptcyCase {
   id: string;
@@ -32,16 +35,29 @@ interface BankruptcyCase {
   updatedAt: string;
 }
 
-interface Form {
+interface GeneratedFormData {
+  formId: string;
+  formName: string;
+  filename: string;
+  base64: string;
+  size: number;
+  generatedAt?: string;
+}
+
+interface FormDefinition {
   id: string;
   name: string;
   title: string;
   description: string;
-  status: "ready" | "pending" | "not_started";
   required: boolean;
   pages: number;
+}
+
+interface Form extends FormDefinition {
+  status: "ready" | "pending" | "not_started";
   lastGenerated: Date | null;
   completeness: number;
+  generatedData?: GeneratedFormData;
 }
 
 export default function CaseFormsPage({
@@ -54,6 +70,11 @@ export default function CaseFormsPage({
   const [caseData, setCaseData] = useState<BankruptcyCase | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [generatedForms, setGeneratedForms] = useState<GeneratedFormData[]>([]);
+  const [generating, setGenerating] = useState(false);
+  const [generatingFormId, setGeneratingFormId] = useState<string | null>(null);
+  const [downloadingAll, setDownloadingAll] = useState(false);
+  const [previewForm, setPreviewForm] = useState<GeneratedFormData | null>(null);
 
   // Unwrap params
   useEffect(() => {
@@ -100,6 +121,89 @@ export default function CaseFormsPage({
     fetchCase();
   }, [id, router]);
 
+  // Generate all forms
+  const generateForms = useCallback(async () => {
+    if (!id) return;
+
+    const connectionString = localStorage.getItem("bankruptcy_db_connection");
+    if (!connectionString) return;
+
+    setGenerating(true);
+    try {
+      const response = await fetch(
+        `/api/cases/${id}/forms/generate?connectionString=${encodeURIComponent(connectionString)}`,
+        { method: "POST" }
+      );
+
+      if (!response.ok) {
+        throw new Error("Failed to generate forms");
+      }
+
+      const data = await response.json();
+      if (data.success && data.forms) {
+        setGeneratedForms(data.forms.map((f: GeneratedFormData) => ({
+          ...f,
+          generatedAt: data.generatedAt,
+        })));
+      }
+    } catch (err) {
+      console.error("Error generating forms:", err);
+      alert("Failed to generate forms. Please try again.");
+    } finally {
+      setGenerating(false);
+    }
+  }, [id]);
+
+  // Download a single form
+  const downloadForm = useCallback((form: GeneratedFormData) => {
+    const byteCharacters = atob(form.base64);
+    const byteNumbers = new Array(byteCharacters.length);
+    for (let i = 0; i < byteCharacters.length; i++) {
+      byteNumbers[i] = byteCharacters.charCodeAt(i);
+    }
+    const byteArray = new Uint8Array(byteNumbers);
+    const blob = new Blob([byteArray], { type: "application/pdf" });
+    saveAs(blob, form.filename);
+  }, []);
+
+  // Download all forms as ZIP
+  const downloadAllForms = useCallback(async () => {
+    if (generatedForms.length === 0) {
+      alert("No forms have been generated yet. Please generate forms first.");
+      return;
+    }
+
+    setDownloadingAll(true);
+    try {
+      const zip = new JSZip();
+      const formsFolder = zip.folder("bankruptcy-forms");
+
+      for (const form of generatedForms) {
+        const byteCharacters = atob(form.base64);
+        const byteNumbers = new Array(byteCharacters.length);
+        for (let i = 0; i < byteCharacters.length; i++) {
+          byteNumbers[i] = byteCharacters.charCodeAt(i);
+        }
+        const byteArray = new Uint8Array(byteNumbers);
+        formsFolder?.file(form.filename, byteArray);
+      }
+
+      const content = await zip.generateAsync({ type: "blob" });
+      const clientName = caseData?.clientName?.replace(/\s+/g, "_") || "client";
+      saveAs(content, `${clientName}_bankruptcy_forms.zip`);
+    } catch (err) {
+      console.error("Error creating ZIP:", err);
+      alert("Failed to create ZIP file. Please try again.");
+    } finally {
+      setDownloadingAll(false);
+    }
+  }, [generatedForms, caseData]);
+
+  // Preview a form (open PDF in modal)
+  const previewFormPdf = useCallback((form: GeneratedFormData) => {
+    setPreviewForm(form);
+  }, []);
+
   if (loading) {
     return (
       <div className="container mx-auto p-6 max-w-7xl">
@@ -127,179 +231,149 @@ export default function CaseFormsPage({
     );
   }
 
-  // Mock forms data - in production this would come from the database
+  // Form definitions
   const isChapter7 = caseData.caseType === "chapter7";
-  
-  const forms: Form[] = [
+
+  const formDefinitions: FormDefinition[] = [
     // Voluntary Petition
     {
-      id: "b101",
+      id: "101",
       name: "Official Form 101",
       title: "Voluntary Petition for Individuals Filing for Bankruptcy",
       description: "The main bankruptcy petition form with debtor information",
-      status: "ready",
       required: true,
       pages: 8,
-      lastGenerated: new Date(Date.now() - 2 * 24 * 60 * 60 * 1000),
-      completeness: 95,
     },
     // Schedules A/B - Property
     {
-      id: "b106ab",
+      id: "106AB",
       name: "Official Form 106A/B",
       title: "Schedule A/B: Property",
       description: "List of all real and personal property",
-      status: "ready",
       required: true,
       pages: 12,
-      lastGenerated: new Date(Date.now() - 2 * 24 * 60 * 60 * 1000),
-      completeness: 100,
     },
     // Schedule C - Exemptions
     {
-      id: "b106c",
+      id: "106C",
       name: "Official Form 106C",
       title: "Schedule C: The Property You Claim as Exempt",
       description: "Property claimed as exempt from the bankruptcy estate",
-      status: "ready",
       required: true,
       pages: 4,
-      lastGenerated: new Date(Date.now() - 2 * 24 * 60 * 60 * 1000),
-      completeness: 88,
     },
     // Schedule D - Secured Claims
     {
-      id: "b106d",
+      id: "106D",
       name: "Official Form 106D",
       title: "Schedule D: Creditors Who Hold Claims Secured by Property",
       description: "List of secured creditors (mortgages, car loans, etc.)",
-      status: "ready",
       required: true,
       pages: 4,
-      lastGenerated: new Date(Date.now() - 1 * 24 * 60 * 60 * 1000),
-      completeness: 100,
     },
     // Schedule E/F - Unsecured Claims
     {
-      id: "b106ef",
+      id: "106EF",
       name: "Official Form 106E/F",
       title: "Schedule E/F: Creditors Who Have Unsecured Claims",
       description: "List of priority and nonpriority unsecured creditors",
-      status: "pending",
       required: true,
       pages: 8,
-      lastGenerated: null,
-      completeness: 72,
     },
     // Schedule G - Executory Contracts
     {
-      id: "b106g",
+      id: "106G",
       name: "Official Form 106G",
       title: "Schedule G: Executory Contracts and Unexpired Leases",
       description: "List of ongoing contracts and leases",
-      status: "not_started",
       required: true,
       pages: 2,
-      lastGenerated: null,
-      completeness: 0,
     },
     // Schedule H - Codebtors
     {
-      id: "b106h",
+      id: "106H",
       name: "Official Form 106H",
       title: "Schedule H: Your Codebtors",
       description: "List of anyone else liable on your debts",
-      status: "not_started",
       required: true,
       pages: 2,
-      lastGenerated: null,
-      completeness: 0,
     },
     // Schedule I - Income
     {
-      id: "b106i",
+      id: "106I",
       name: "Official Form 106I",
       title: "Schedule I: Your Income",
       description: "Current income from all sources",
-      status: "ready",
       required: true,
       pages: 4,
-      lastGenerated: new Date(Date.now() - 1 * 24 * 60 * 60 * 1000),
-      completeness: 100,
     },
     // Schedule J - Expenses
     {
-      id: "b106j",
+      id: "106J",
       name: "Official Form 106J",
       title: "Schedule J: Your Expenses",
       description: "Current monthly expenses",
-      status: "ready",
       required: true,
       pages: 4,
-      lastGenerated: new Date(Date.now() - 1 * 24 * 60 * 60 * 1000),
-      completeness: 100,
     },
     // Statement of Financial Affairs
     {
-      id: "b107",
+      id: "107",
       name: "Official Form 107",
       title: "Statement of Financial Affairs for Individuals Filing for Bankruptcy",
       description: "Detailed financial history and transactions",
-      status: "pending",
       required: true,
       pages: 12,
-      lastGenerated: null,
-      completeness: 45,
     },
     // Chapter 7 Means Test
     ...(isChapter7 ? [{
-      id: "b122a1",
+      id: "122A",
       name: "Official Form 122A-1",
       title: "Chapter 7 Statement of Your Current Monthly Income",
       description: "Means test calculation for Chapter 7 eligibility",
-      status: "ready" as const,
       required: true,
       pages: 4,
-      lastGenerated: new Date(Date.now() - 3 * 60 * 60 * 1000),
-      completeness: 100,
     }] : []),
     // Chapter 7 Means Test Calculation (if above median)
     ...(isChapter7 ? [{
-      id: "b122a2",
+      id: "122A-2",
       name: "Official Form 122A-2",
       title: "Chapter 7 Means Test Calculation",
       description: "Detailed means test if income exceeds state median",
-      status: "ready" as const,
       required: false,
       pages: 8,
-      lastGenerated: new Date(Date.now() - 3 * 60 * 60 * 1000),
-      completeness: 100,
     }] : []),
     // Declaration
     {
-      id: "b119",
+      id: "119",
       name: "Official Form 119",
       title: "Bankruptcy Petition Preparer's Notice, Declaration, and Signature",
       description: "Required if a non-attorney preparer assisted",
-      status: "not_started",
       required: false,
       pages: 2,
-      lastGenerated: null,
-      completeness: 0,
     },
     // Cover Sheet
     {
-      id: "b121",
+      id: "121",
       name: "Official Form 121",
       title: "Statement About Your Social Security Numbers",
       description: "SSN verification for court records",
-      status: "ready",
       required: true,
       pages: 1,
-      lastGenerated: new Date(Date.now() - 2 * 24 * 60 * 60 * 1000),
-      completeness: 100,
     },
   ];
+
+  // Merge form definitions with generated forms
+  const forms: Form[] = formDefinitions.map((def) => {
+    const generated = generatedForms.find((g) => g.formId === def.id);
+    return {
+      ...def,
+      status: generated ? "ready" as const : "not_started" as const,
+      lastGenerated: generated?.generatedAt ? new Date(generated.generatedAt) : null,
+      completeness: generated ? 100 : 0,
+      generatedData: generated,
+    };
+  });
 
   const stats = {
     total: forms.length,
@@ -359,12 +433,28 @@ export default function CaseFormsPage({
             </p>
           </div>
           <div className="flex items-center gap-3">
-            <button className="flex items-center gap-2 px-4 py-2 border rounded-lg hover:bg-muted transition-colors">
-              <RefreshCw className="w-4 h-4" />
-              Regenerate All
+            <button
+              onClick={generateForms}
+              disabled={generating}
+              className="flex items-center gap-2 px-4 py-2 border rounded-lg hover:bg-muted transition-colors disabled:opacity-50"
+            >
+              {generating ? (
+                <Loader2 className="w-4 h-4 animate-spin" />
+              ) : (
+                <RefreshCw className="w-4 h-4" />
+              )}
+              {generating ? "Generating..." : "Regenerate All"}
             </button>
-            <button className="flex items-center gap-2 px-4 py-2 bg-primary text-primary-foreground rounded-lg hover:bg-primary/90 transition-colors">
-              <Download className="w-4 h-4" />
+            <button
+              onClick={downloadAllForms}
+              disabled={downloadingAll || generatedForms.length === 0}
+              className="flex items-center gap-2 px-4 py-2 bg-primary text-primary-foreground rounded-lg hover:bg-primary/90 transition-colors disabled:opacity-50"
+            >
+              {downloadingAll ? (
+                <Loader2 className="w-4 h-4 animate-spin" />
+              ) : (
+                <Download className="w-4 h-4" />
+              )}
               Download Package
             </button>
           </div>
@@ -457,31 +547,52 @@ export default function CaseFormsPage({
 
       {/* Quick Actions */}
       <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-8">
-        <button className="flex items-center gap-3 p-4 bg-card rounded-lg border hover:shadow-md transition-shadow text-left">
+        <button
+          onClick={generateForms}
+          disabled={generating}
+          className="flex items-center gap-3 p-4 bg-card rounded-lg border hover:shadow-md transition-shadow text-left disabled:opacity-50"
+        >
           <div className="p-2 bg-blue-100 rounded-lg">
-            <FilePlus className="w-5 h-5 text-blue-600" />
+            {generating ? (
+              <Loader2 className="w-5 h-5 text-blue-600 animate-spin" />
+            ) : (
+              <FilePlus className="w-5 h-5 text-blue-600" />
+            )}
           </div>
           <div>
-            <div className="font-semibold">Generate Missing Forms</div>
+            <div className="font-semibold">
+              {generatedForms.length > 0 ? "Regenerate All Forms" : "Generate All Forms"}
+            </div>
             <div className="text-sm text-muted-foreground">
-              Auto-populate {stats.notStarted + stats.pending} incomplete forms
+              {generating ? "Generating forms..." : `Auto-populate ${stats.notStarted + stats.pending} incomplete forms`}
             </div>
           </div>
         </button>
 
-        <button className="flex items-center gap-3 p-4 bg-card rounded-lg border hover:shadow-md transition-shadow text-left">
+        <button
+          onClick={downloadAllForms}
+          disabled={downloadingAll || generatedForms.length === 0}
+          className="flex items-center gap-3 p-4 bg-card rounded-lg border hover:shadow-md transition-shadow text-left disabled:opacity-50"
+        >
           <div className="p-2 bg-green-100 rounded-lg">
-            <Printer className="w-5 h-5 text-green-600" />
+            {downloadingAll ? (
+              <Loader2 className="w-5 h-5 text-green-600 animate-spin" />
+            ) : (
+              <Printer className="w-5 h-5 text-green-600" />
+            )}
           </div>
           <div>
             <div className="font-semibold">Print All Ready Forms</div>
             <div className="text-sm text-muted-foreground">
-              Print {stats.ready} forms for client review
+              {generatedForms.length > 0 ? `Download ${stats.ready} forms for client review` : "Generate forms first"}
             </div>
           </div>
         </button>
 
-        <button className="flex items-center gap-3 p-4 bg-card rounded-lg border hover:shadow-md transition-shadow text-left">
+        <button
+          disabled={generatedForms.length === 0}
+          className="flex items-center gap-3 p-4 bg-card rounded-lg border hover:shadow-md transition-shadow text-left disabled:opacity-50"
+        >
           <div className="p-2 bg-purple-100 rounded-lg">
             <Send className="w-5 h-5 text-purple-600" />
           </div>
@@ -548,27 +659,49 @@ export default function CaseFormsPage({
                 
                 {/* Actions */}
                 <div className="flex items-center gap-2 flex-shrink-0">
-                  {form.status === "ready" ? (
+                  {form.status === "ready" && form.generatedData ? (
                     <>
-                      <button className="p-2 hover:bg-muted rounded-lg transition-colors" title="Preview">
+                      <button
+                        onClick={() => previewFormPdf(form.generatedData!)}
+                        className="p-2 hover:bg-muted rounded-lg transition-colors"
+                        title="Preview"
+                      >
                         <Eye className="w-4 h-4 text-muted-foreground" />
                       </button>
-                      <button className="p-2 hover:bg-muted rounded-lg transition-colors" title="Download">
+                      <button
+                        onClick={() => downloadForm(form.generatedData!)}
+                        className="p-2 hover:bg-muted rounded-lg transition-colors"
+                        title="Download"
+                      >
                         <Download className="w-4 h-4 text-muted-foreground" />
                       </button>
-                      <button className="p-2 hover:bg-muted rounded-lg transition-colors" title="Regenerate">
-                        <RefreshCw className="w-4 h-4 text-muted-foreground" />
+                      <button
+                        onClick={generateForms}
+                        disabled={generating}
+                        className="p-2 hover:bg-muted rounded-lg transition-colors disabled:opacity-50"
+                        title="Regenerate"
+                      >
+                        {generating ? (
+                          <Loader2 className="w-4 h-4 text-muted-foreground animate-spin" />
+                        ) : (
+                          <RefreshCw className="w-4 h-4 text-muted-foreground" />
+                        )}
                       </button>
                     </>
-                  ) : form.status === "pending" ? (
-                    <>
-                      <button className="flex items-center gap-2 px-3 py-1.5 text-sm bg-yellow-100 text-yellow-700 rounded-lg hover:bg-yellow-200 transition-colors">
-                        <Loader2 className="w-4 h-4 animate-spin" />
-                        Continue
-                      </button>
-                    </>
+                  ) : generating || generatingFormId === form.id ? (
+                    <button
+                      disabled
+                      className="flex items-center gap-2 px-3 py-1.5 text-sm bg-yellow-100 text-yellow-700 rounded-lg"
+                    >
+                      <Loader2 className="w-4 h-4 animate-spin" />
+                      Generating...
+                    </button>
                   ) : (
-                    <button className="flex items-center gap-2 px-3 py-1.5 text-sm bg-primary text-primary-foreground rounded-lg hover:bg-primary/90 transition-colors">
+                    <button
+                      onClick={generateForms}
+                      disabled={generating}
+                      className="flex items-center gap-2 px-3 py-1.5 text-sm bg-primary text-primary-foreground rounded-lg hover:bg-primary/90 transition-colors disabled:opacity-50"
+                    >
                       <FilePlus className="w-4 h-4" />
                       Generate
                     </button>
@@ -596,6 +729,46 @@ export default function CaseFormsPage({
           </div>
         </div>
       </div>
+
+      {/* PDF Preview Modal */}
+      {previewForm && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center">
+          <div
+            className="absolute inset-0 bg-black/50"
+            onClick={() => setPreviewForm(null)}
+          />
+          <div className="relative bg-card rounded-lg shadow-xl w-full max-w-4xl h-[80vh] flex flex-col">
+            <div className="flex items-center justify-between p-4 border-b">
+              <div>
+                <h3 className="font-semibold">{previewForm.formName}</h3>
+                <p className="text-sm text-muted-foreground">{previewForm.filename}</p>
+              </div>
+              <div className="flex items-center gap-2">
+                <button
+                  onClick={() => downloadForm(previewForm)}
+                  className="flex items-center gap-2 px-3 py-1.5 text-sm border rounded-lg hover:bg-muted transition-colors"
+                >
+                  <Download className="w-4 h-4" />
+                  Download
+                </button>
+                <button
+                  onClick={() => setPreviewForm(null)}
+                  className="p-2 hover:bg-muted rounded-lg transition-colors"
+                >
+                  <X className="w-5 h-5" />
+                </button>
+              </div>
+            </div>
+            <div className="flex-1 p-4 overflow-auto bg-muted">
+              <iframe
+                src={`data:application/pdf;base64,${previewForm.base64}`}
+                className="w-full h-full rounded border"
+                title={previewForm.formName}
+              />
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

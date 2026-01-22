@@ -361,6 +361,32 @@ export const assets = pgTable(
   })
 );
 
+export const expenses = pgTable(
+  'expenses',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    caseId: uuid('case_id')
+      .notNull()
+      .references(() => bankruptcyCases.id, { onDelete: 'cascade' }),
+
+    // Expense Details
+    category: text('category').notNull()
+      .$type<'housing' | 'utilities' | 'food' | 'clothing' | 'transportation' | 'medical' | 'childcare' | 'insurance' | 'taxes' | 'debt_payments' | 'entertainment' | 'education' | 'other'>(),
+    description: text('description'),
+    monthlyAmount: decimal('monthly_amount', { precision: 10, scale: 2 }).notNull(),
+
+    // IRS Standard Reference (for means test)
+    isIrsStandard: boolean('is_irs_standard').default(false),
+    irsStandardType: text('irs_standard_type').$type<'national' | 'local' | 'other' | null>(),
+
+    createdAt: timestamp('created_at').notNull().defaultNow(),
+  },
+  (table) => ({
+    caseIdIdx: index('expenses_case_id_idx').on(table.caseId),
+    categoryIdx: index('expenses_category_idx').on(table.category),
+  })
+);
+
 export const meansTestResults = pgTable(
   'means_test_results',
   {
@@ -418,3 +444,5 @@ export type Asset = typeof assets.$inferSelect;
 export type NewAsset = typeof assets.$inferInsert;
 export type MeansTestResult = typeof meansTestResults.$inferSelect;
 export type NewMeansTestResult = typeof meansTestResults.$inferInsert;
+export type Expense = typeof expenses.$inferSelect;
+export type NewExpense = typeof expenses.$inferInsert;

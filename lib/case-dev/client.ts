@@ -283,6 +283,48 @@ export class CaseDevClient {
   }
 
   /**
+   * Get download URL for a vault object
+   * GET /vault/{vaultId}/objects/{objectId}/download
+   * Returns a pre-signed URL for downloading the file
+   */
+  async getDownloadUrl(params: { vaultId: string; objectId: string }): Promise<{
+    downloadUrl: string;
+    filename?: string;
+    contentType?: string;
+  }> {
+    return this.request(`/vault/${params.vaultId}/objects/${params.objectId}/download`, {
+      method: 'GET',
+    });
+  }
+
+  /**
+   * Get vault object metadata
+   * GET /vault/{vaultId}/objects/{objectId}
+   */
+  async getVaultObject(params: { vaultId: string; objectId: string }): Promise<{
+    id: string;
+    filename: string;
+    contentType: string;
+    size: number;
+    createdAt: string;
+    metadata?: Record<string, any>;
+  }> {
+    return this.request(`/vault/${params.vaultId}/objects/${params.objectId}`, {
+      method: 'GET',
+    });
+  }
+
+  /**
+   * Delete a vault object
+   * DELETE /vault/{vaultId}/objects/{objectId}
+   */
+  async deleteVaultObject(params: { vaultId: string; objectId: string }): Promise<void> {
+    return this.request(`/vault/${params.vaultId}/objects/${params.objectId}`, {
+      method: 'DELETE',
+    });
+  }
+
+  /**
    * Call LLM with CaseMark Core 1 model
    */
   async completeLLM(params: {

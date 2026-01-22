@@ -2,11 +2,11 @@
 
 import { useEffect, useState } from 'react';
 import { useRouter } from 'next/navigation';
-import { 
-  Plus, 
-  FileText, 
-  Clock, 
-  Key, 
+import {
+  Plus,
+  FileText,
+  Clock,
+  Key,
   Database,
   Calculator,
   DollarSign,
@@ -23,6 +23,62 @@ import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Alert, AlertDescription } from '@/components/ui/alert';
 import { initializeDatabase, hasDatabase } from '@/lib/database/provision';
+import { CaseSelectorModal } from '@/components/cases/case-selector-modal';
+
+// Feature configuration type
+interface FeatureConfig {
+  id: string;
+  title: string;
+  description: string;
+  path: string;
+  icon: React.ReactNode;
+}
+
+// P0 Feature configurations
+const P0_FEATURES: Record<string, FeatureConfig> = {
+  clientIntake: {
+    id: 'clientIntake',
+    title: 'Client Intake',
+    description: 'Manage client information and documents',
+    path: '',
+    icon: <Users className="w-5 h-5 text-blue-600" />,
+  },
+  documentUpload: {
+    id: 'documentUpload',
+    title: 'Document Upload',
+    description: 'Upload and process financial documents',
+    path: 'documents',
+    icon: <Upload className="w-5 h-5 text-blue-600" />,
+  },
+  meansTest: {
+    id: 'meansTest',
+    title: 'Means Test',
+    description: 'Calculate Chapter 7 eligibility',
+    path: 'means-test',
+    icon: <Calculator className="w-5 h-5 text-purple-600" />,
+  },
+  formGeneration: {
+    id: 'formGeneration',
+    title: 'Form Generation',
+    description: 'Generate official bankruptcy forms',
+    path: 'forms',
+    icon: <FileText className="w-5 h-5 text-purple-600" />,
+  },
+  chapter13Plan: {
+    id: 'chapter13Plan',
+    title: 'Chapter 13 Plan',
+    description: 'View and manage repayment plan',
+    path: 'financial',
+    icon: <DollarSign className="w-5 h-5 text-green-600" />,
+  },
+  paymentTracking: {
+    id: 'paymentTracking',
+    title: 'Payment Tracking',
+    description: 'Track financial data and payments',
+    path: 'financial',
+    icon: <CreditCard className="w-5 h-5 text-green-600" />,
+  },
+};
 
 export default function CasesPage() {
   const router = useRouter();
@@ -31,6 +87,21 @@ export default function CasesPage() {
   const [dbError, setDbError] = useState<string | null>(null);
   const [dbReady, setDbReady] = useState(false);
   const [cases, setCases] = useState<any[]>([]);
+  const [selectedFeature, setSelectedFeature] = useState<FeatureConfig | null>(null);
+  const [modalOpen, setModalOpen] = useState(false);
+
+  const handleFeatureClick = (featureId: string) => {
+    const feature = P0_FEATURES[featureId];
+    if (feature) {
+      setSelectedFeature(feature);
+      setModalOpen(true);
+    }
+  };
+
+  const closeModal = () => {
+    setModalOpen(false);
+    setSelectedFeature(null);
+  };
 
   useEffect(() => {
     async function init() {
@@ -196,7 +267,10 @@ export default function CasesPage() {
           <h2 className="text-xl font-semibold mb-6">Platform Features</h2>
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
             {/* P0 Features - Core */}
-            <Card className="hover:shadow-md transition-shadow cursor-pointer border-l-4 border-l-blue-500">
+            <Card
+              onClick={() => handleFeatureClick('clientIntake')}
+              className="hover:shadow-md transition-shadow cursor-pointer border-l-4 border-l-blue-500 active:scale-[0.98]"
+            >
               <CardHeader className="pb-2">
                 <Users className="w-6 h-6 text-blue-600 mb-2" />
                 <CardTitle className="text-base">Client Intake</CardTitle>
@@ -208,7 +282,10 @@ export default function CasesPage() {
               </CardContent>
             </Card>
 
-            <Card className="hover:shadow-md transition-shadow cursor-pointer border-l-4 border-l-blue-500">
+            <Card
+              onClick={() => handleFeatureClick('documentUpload')}
+              className="hover:shadow-md transition-shadow cursor-pointer border-l-4 border-l-blue-500 active:scale-[0.98]"
+            >
               <CardHeader className="pb-2">
                 <Upload className="w-6 h-6 text-blue-600 mb-2" />
                 <CardTitle className="text-base">Document Upload</CardTitle>
@@ -220,7 +297,10 @@ export default function CasesPage() {
               </CardContent>
             </Card>
 
-            <Card className="hover:shadow-md transition-shadow cursor-pointer border-l-4 border-l-purple-500">
+            <Card
+              onClick={() => handleFeatureClick('meansTest')}
+              className="hover:shadow-md transition-shadow cursor-pointer border-l-4 border-l-purple-500 active:scale-[0.98]"
+            >
               <CardHeader className="pb-2">
                 <Calculator className="w-6 h-6 text-purple-600 mb-2" />
                 <CardTitle className="text-base">Means Test</CardTitle>
@@ -232,7 +312,10 @@ export default function CasesPage() {
               </CardContent>
             </Card>
 
-            <Card className="hover:shadow-md transition-shadow cursor-pointer border-l-4 border-l-purple-500">
+            <Card
+              onClick={() => handleFeatureClick('formGeneration')}
+              className="hover:shadow-md transition-shadow cursor-pointer border-l-4 border-l-purple-500 active:scale-[0.98]"
+            >
               <CardHeader className="pb-2">
                 <FileText className="w-6 h-6 text-purple-600 mb-2" />
                 <CardTitle className="text-base">Form Generation</CardTitle>
@@ -244,7 +327,10 @@ export default function CasesPage() {
               </CardContent>
             </Card>
 
-            <Card className="hover:shadow-md transition-shadow cursor-pointer border-l-4 border-l-green-500">
+            <Card
+              onClick={() => handleFeatureClick('chapter13Plan')}
+              className="hover:shadow-md transition-shadow cursor-pointer border-l-4 border-l-green-500 active:scale-[0.98]"
+            >
               <CardHeader className="pb-2">
                 <DollarSign className="w-6 h-6 text-green-600 mb-2" />
                 <CardTitle className="text-base">Chapter 13 Plan</CardTitle>
@@ -256,7 +342,10 @@ export default function CasesPage() {
               </CardContent>
             </Card>
 
-            <Card className="hover:shadow-md transition-shadow cursor-pointer border-l-4 border-l-green-500">
+            <Card
+              onClick={() => handleFeatureClick('paymentTracking')}
+              className="hover:shadow-md transition-shadow cursor-pointer border-l-4 border-l-green-500 active:scale-[0.98]"
+            >
               <CardHeader className="pb-2">
                 <CreditCard className="w-6 h-6 text-green-600 mb-2" />
                 <CardTitle className="text-base">Payment Tracking</CardTitle>
@@ -350,6 +439,14 @@ export default function CasesPage() {
           </div>
         </div>
       </main>
+
+      {/* Case Selector Modal */}
+      <CaseSelectorModal
+        isOpen={modalOpen}
+        onClose={closeModal}
+        cases={cases}
+        feature={selectedFeature}
+      />
     </div>
   );
 }

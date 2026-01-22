@@ -70,8 +70,17 @@ export function NewCaseForm() {
         throw new Error(errorData.error || 'Failed to create case');
       }
 
-      // Redirect to cases list
-      router.push(`/cases`);
+      // Check if there's a post-creation redirect stored (from feature card click)
+      const postCreateRedirect = sessionStorage.getItem('postCaseCreateRedirect');
+      sessionStorage.removeItem('postCaseCreateRedirect'); // Clean up
+
+      if (postCreateRedirect) {
+        // Redirect to the specific feature page for the new case
+        router.push(`/cases/${caseId}/${postCreateRedirect}`);
+      } else {
+        // Default: redirect to the new case detail page
+        router.push(`/cases/${caseId}`);
+      }
     } catch (err) {
       setError(err instanceof Error ? err.message : "An error occurred");
       setLoading(false);

@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useState, useCallback } from "react";
 import { useParams, useRouter } from "next/navigation";
 import {
   DollarSign,
@@ -14,12 +14,18 @@ import {
   ChevronRight,
   Plus,
   Edit,
+  Trash2,
   AlertCircle,
   CheckCircle,
   Loader2,
   FileText,
 } from "lucide-react";
 import Link from "next/link";
+import { AddIncomeModal } from "@/components/cases/financial/add-income-modal";
+import { AddDebtModal } from "@/components/cases/financial/add-debt-modal";
+import { AddAssetModal } from "@/components/cases/financial/add-asset-modal";
+import { AddExpenseModal } from "@/components/cases/financial/add-expense-modal";
+import { DeleteConfirmationModal } from "@/components/cases/financial/delete-confirmation-modal";
 
 interface BankruptcyCase {
   id: string;
@@ -35,35 +41,103 @@ interface BankruptcyCase {
   state: string | null;
 }
 
-interface IncomeSource {
+interface IncomeRecord {
   id: string;
-  name: string;
-  amount: number;
-  verified: boolean;
+  employer: string | null;
+  occupation: string | null;
+  grossPay: number | null;
+  netPay: number | null;
+  payPeriod: string | null;
+  incomeSource: string | null;
+  ytdGross: number | null;
 }
 
-interface ExpenseCategory {
+interface ExpenseRecord {
   id: string;
-  name: string;
-  amount: number;
-  icon: typeof Home;
+  category: string;
+  description: string | null;
+  monthlyAmount: number;
+  isIrsStandard: boolean;
+  irsStandardType: string | null;
 }
 
-interface Asset {
+interface AssetRecord {
   id: string;
-  name: string;
-  value: number;
-  exempt: number;
-  type: string;
+  assetType: string;
+  description: string;
+  currentValue: number;
+  address: string | null;
+  make: string | null;
+  model: string | null;
+  year: number | null;
+  vin: string | null;
+  institution: string | null;
+  accountNumberLast4: string | null;
+  ownershipPercentage: number;
 }
 
-interface Debt {
+interface DebtRecord {
   id: string;
-  name: string;
+  creditorName: string;
+  creditorAddress: string | null;
+  accountLast4: string | null;
   balance: number;
-  monthly: number;
-  type: "secured" | "unsecured";
-  priority: string;
+  monthlyPayment: number | null;
+  interestRate: number | null;
+  debtType: string;
+  secured: boolean;
+  priority: boolean;
+  collateral: string | null;
+  collateralValue: number | null;
+}
+
+// Delete item type for confirmation modal
+type DeleteItemType = 'income' | 'expense' | 'asset' | 'debt';
+
+// Category icons mapping
+const CATEGORY_ICONS: Record<string, typeof Home> = {
+  housing: Home,
+  transportation: Car,
+  utilities: DollarSign,
+  food: DollarSign,
+  medical: DollarSign,
+  insurance: DollarSign,
+  clothing: DollarSign,
+  childcare: DollarSign,
+  taxes: DollarSign,
+  debt_payments: CreditCard,
+  entertainment: DollarSign,
+  education: DollarSign,
+  other: DollarSign,
+};
+
+// Category label mapping
+const CATEGORY_LABELS: Record<string, string> = {
+  housing: 'Housing',
+  utilities: 'Utilities',
+  food: 'Food',
+  clothing: 'Clothing',
+  transportation: 'Transportation',
+  medical: 'Medical/Healthcare',
+  childcare: 'Childcare',
+  insurance: 'Insurance',
+  taxes: 'Taxes',
+  debt_payments: 'Debt Payments',
+  entertainment: 'Entertainment',
+  education: 'Education',
+  other: 'Other',
+};
+
+// Helper to calculate monthly income from pay period
+function calculateMonthlyIncome(grossPay: number | null, payPeriod: string | null): number {
+  if (!grossPay) return 0;
+  switch (payPeriod) {
+    case 'weekly': return grossPay * 4.33;
+    case 'biweekly': return grossPay * 2.17;
+    case 'annual': return grossPay / 12;
+    case 'monthly':
+    default: return grossPay;
+  }
 }
 
 export default function CaseFinancialPage() {
@@ -74,18 +148,64 @@ export default function CaseFinancialPage() {
   const [caseData, setCaseData] = useState<BankruptcyCase | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
-  
-  // Financial data from database (empty by default)
-  const [incomeSources, setIncomeSources] = useState<IncomeSource[]>([]);
-  const [expenses, setExpenses] = useState<ExpenseCategory[]>([]);
-  const [assets, setAssets] = useState<Asset[]>([]);
-  const [debts, setDebts] = useState<Debt[]>([]);
+
+  // Financial data from database
+  const [incomeRecords, setIncomeRecords] = useState<IncomeRecord[]>([]);
+  const [expenseRecords, setExpenseRecords] = useState<ExpenseRecord[]>([]);
+  const [assetRecords, setAssetRecords] = useState<AssetRecord[]>([]);
+  const [debtRecords, setDebtRecords] = useState<DebtRecord[]>([]);
+
+  // Modal states
+  const [addIncomeOpen, setAddIncomeOpen] = useState(false);
+  const [addExpenseOpen, setAddExpenseOpen] = useState(false);
+  const [addAssetOpen, setAddAssetOpen] = useState(false);
+  const [addDebtOpen, setAddDebtOpen] = useState(false);
+
+  // Delete confirmation modal state
+  const [deleteModalOpen, setDeleteModalOpen] = useState(false);
+  const [deleteItemType, setDeleteItemType] = useState<DeleteItemType>('income');
+  const [deleteItemId, setDeleteItemId] = useState<string>('');
+  const [deleteItemName, setDeleteItemName] = useState<string>('');
+
+  const connectionString = typeof window !== 'undefined' ? localStorage.getItem("bankruptcy_db_connection") : null;
+
+  const fetchFinancialData = useCallback(async () => {
+    if (!connectionString) return;
+
+    try {
+      const [incomeRes, expenseRes, assetRes, debtRes] = await Promise.all([
+        fetch(`/api/cases/${id}/income?connectionString=${encodeURIComponent(connectionString)}`),
+        fetch(`/api/cases/${id}/expenses?connectionString=${encodeURIComponent(connectionString)}`),
+        fetch(`/api/cases/${id}/assets?connectionString=${encodeURIComponent(connectionString)}`),
+        fetch(`/api/cases/${id}/debts?connectionString=${encodeURIComponent(connectionString)}`),
+      ]);
+
+      if (incomeRes.ok) {
+        const data = await incomeRes.json();
+        setIncomeRecords(data.income || []);
+      }
+      if (expenseRes.ok) {
+        const data = await expenseRes.json();
+        setExpenseRecords(data.expenses || []);
+      }
+      if (assetRes.ok) {
+        const data = await assetRes.json();
+        setAssetRecords(data.assets || []);
+      }
+      if (debtRes.ok) {
+        const data = await debtRes.json();
+        setDebtRecords(data.debts || []);
+      }
+    } catch (err) {
+      console.error("Error fetching financial data:", err);
+    }
+  }, [id, connectionString]);
 
   useEffect(() => {
     const apiKey = localStorage.getItem("casedev_api_key");
-    const connectionString = localStorage.getItem("bankruptcy_db_connection");
+    const connStr = localStorage.getItem("bankruptcy_db_connection");
 
-    if (!apiKey || !connectionString) {
+    if (!apiKey || !connStr) {
       router.push("/login");
       return;
     }
@@ -93,7 +213,7 @@ export default function CaseFinancialPage() {
     async function fetchCase() {
       try {
         const response = await fetch(
-          `/api/cases/${id}?connectionString=${encodeURIComponent(connectionString!)}`
+          `/api/cases/${id}?connectionString=${encodeURIComponent(connStr!)}`
         );
 
         if (!response.ok) {
@@ -107,12 +227,7 @@ export default function CaseFinancialPage() {
 
         const data = await response.json();
         setCaseData(data.case);
-        
-        // TODO: Fetch financial data from database
-        // For now, financial data will be empty until user adds it
-        // In a full implementation, you would fetch income sources, expenses, assets, and debts
-        // from separate API endpoints or include them in the case response
-        
+
       } catch (err) {
         console.error("Error fetching case:", err);
         setError("Failed to load case data");
@@ -122,7 +237,39 @@ export default function CaseFinancialPage() {
     }
 
     fetchCase();
-  }, [id, router]);
+    fetchFinancialData();
+  }, [id, router, fetchFinancialData]);
+
+  // Handle delete confirmation
+  const handleDeleteClick = (type: DeleteItemType, itemId: string, itemName: string) => {
+    setDeleteItemType(type);
+    setDeleteItemId(itemId);
+    setDeleteItemName(itemName);
+    setDeleteModalOpen(true);
+  };
+
+  const handleDeleteConfirm = async () => {
+    if (!connectionString) return;
+
+    const endpoints: Record<DeleteItemType, string> = {
+      income: `/api/cases/${id}/income/${deleteItemId}`,
+      expense: `/api/cases/${id}/expenses/${deleteItemId}`,
+      asset: `/api/cases/${id}/assets/${deleteItemId}`,
+      debt: `/api/cases/${id}/debts/${deleteItemId}`,
+    };
+
+    const response = await fetch(
+      `${endpoints[deleteItemType]}?connectionString=${encodeURIComponent(connectionString)}`,
+      { method: 'DELETE' }
+    );
+
+    if (!response.ok) {
+      throw new Error('Failed to delete item');
+    }
+
+    // Refresh the data
+    await fetchFinancialData();
+  };
 
   if (loading) {
     return (
@@ -147,21 +294,23 @@ export default function CaseFinancialPage() {
   }
 
   // Calculate totals from actual data
-  const totalMonthlyIncome = caseData.monthlyIncome || incomeSources.reduce((sum, s) => sum + s.amount, 0);
-  const totalMonthlyExpenses = caseData.monthlyExpenses || expenses.reduce((sum, e) => sum + e.amount, 0);
-  const totalAssets = caseData.totalAssets || assets.reduce((sum, a) => sum + a.value, 0);
-  const totalDebt = caseData.totalDebt || debts.reduce((sum, d) => sum + d.balance, 0);
-  const totalExempt = assets.reduce((sum, a) => sum + a.exempt, 0);
-  const securedDebt = debts.filter(d => d.type === "secured").reduce((sum, d) => sum + d.balance, 0);
-  const unsecuredDebt = debts.filter(d => d.type === "unsecured").reduce((sum, d) => sum + d.balance, 0);
+  const totalMonthlyIncome = incomeRecords.reduce(
+    (sum, r) => sum + calculateMonthlyIncome(r.grossPay, r.payPeriod),
+    0
+  );
+  const totalMonthlyExpenses = expenseRecords.reduce((sum, e) => sum + Number(e.monthlyAmount), 0);
+  const totalAssets = assetRecords.reduce((sum, a) => sum + Number(a.currentValue), 0);
+  const totalDebt = debtRecords.reduce((sum, d) => sum + Number(d.balance), 0);
+  const securedDebt = debtRecords.filter(d => d.secured).reduce((sum, d) => sum + Number(d.balance), 0);
+  const unsecuredDebt = debtRecords.filter(d => !d.secured).reduce((sum, d) => sum + Number(d.balance), 0);
 
   const disposableIncome = totalMonthlyIncome - totalMonthlyExpenses;
   const annualIncome = totalMonthlyIncome * 12;
-  const debtToIncomeRatio = annualIncome > 0 
+  const debtToIncomeRatio = annualIncome > 0
     ? ((totalDebt / annualIncome) * 100).toFixed(1)
     : "0";
 
-  const hasFinancialData = totalMonthlyIncome > 0 || totalMonthlyExpenses > 0 || totalAssets > 0 || totalDebt > 0;
+  const hasFinancialData = incomeRecords.length > 0 || expenseRecords.length > 0 || assetRecords.length > 0 || debtRecords.length > 0;
 
   // Empty state component
   const EmptyState = ({ title, description, onAdd }: { title: string; description: string; onAdd: () => void }) => (
@@ -169,7 +318,7 @@ export default function CaseFinancialPage() {
       <FileText className="w-10 h-10 mx-auto mb-3 opacity-50" />
       <p className="font-medium">{title}</p>
       <p className="text-sm mb-4">{description}</p>
-      <button 
+      <button
         onClick={onAdd}
         className="inline-flex items-center gap-2 px-4 py-2 bg-primary text-primary-foreground rounded-lg hover:bg-primary/90 transition-colors text-sm"
       >
@@ -181,6 +330,39 @@ export default function CaseFinancialPage() {
 
   return (
     <div className="container mx-auto p-6 max-w-7xl">
+      {/* Modals */}
+      <AddIncomeModal
+        open={addIncomeOpen}
+        onOpenChange={setAddIncomeOpen}
+        caseId={id}
+        onSuccess={fetchFinancialData}
+      />
+      <AddExpenseModal
+        open={addExpenseOpen}
+        onOpenChange={setAddExpenseOpen}
+        caseId={id}
+        onSuccess={fetchFinancialData}
+      />
+      <AddAssetModal
+        open={addAssetOpen}
+        onOpenChange={setAddAssetOpen}
+        caseId={id}
+        onSuccess={fetchFinancialData}
+      />
+      <AddDebtModal
+        open={addDebtOpen}
+        onOpenChange={setAddDebtOpen}
+        caseId={id}
+        onSuccess={fetchFinancialData}
+      />
+      <DeleteConfirmationModal
+        open={deleteModalOpen}
+        onOpenChange={setDeleteModalOpen}
+        title={`Delete ${deleteItemType.charAt(0).toUpperCase() + deleteItemType.slice(1)}?`}
+        description={`Are you sure you want to delete "${deleteItemName}"? This action cannot be undone.`}
+        onConfirm={handleDeleteConfirm}
+      />
+
       {/* Header */}
       <div className="mb-8">
         <div className="flex items-center gap-2 text-sm text-muted-foreground mb-2">
@@ -201,10 +383,6 @@ export default function CaseFinancialPage() {
               Income, expenses, assets, and debts overview
             </p>
           </div>
-          <button className="flex items-center gap-2 px-4 py-2 bg-primary text-primary-foreground rounded-lg hover:bg-primary/90 transition-colors">
-            <Edit className="w-4 h-4" />
-            Edit Financial Data
-          </button>
         </div>
       </div>
 
@@ -232,7 +410,7 @@ export default function CaseFinancialPage() {
             </div>
             <div>
               <div className="text-2xl font-bold">
-                {totalMonthlyIncome > 0 ? `$${totalMonthlyIncome.toLocaleString()}` : "—"}
+                {totalMonthlyIncome > 0 ? `$${totalMonthlyIncome.toLocaleString(undefined, { maximumFractionDigits: 0 })}` : "—"}
               </div>
               <div className="text-sm text-muted-foreground">Monthly Income</div>
             </div>
@@ -246,7 +424,7 @@ export default function CaseFinancialPage() {
             </div>
             <div>
               <div className="text-2xl font-bold">
-                {totalMonthlyExpenses > 0 ? `$${totalMonthlyExpenses.toLocaleString()}` : "—"}
+                {totalMonthlyExpenses > 0 ? `$${totalMonthlyExpenses.toLocaleString(undefined, { maximumFractionDigits: 0 })}` : "—"}
               </div>
               <div className="text-sm text-muted-foreground">Monthly Expenses</div>
             </div>
@@ -260,7 +438,7 @@ export default function CaseFinancialPage() {
             </div>
             <div>
               <div className="text-2xl font-bold">
-                {totalAssets > 0 ? `$${totalAssets.toLocaleString()}` : "—"}
+                {totalAssets > 0 ? `$${totalAssets.toLocaleString(undefined, { maximumFractionDigits: 0 })}` : "—"}
               </div>
               <div className="text-sm text-muted-foreground">Total Assets</div>
             </div>
@@ -274,7 +452,7 @@ export default function CaseFinancialPage() {
             </div>
             <div>
               <div className="text-2xl font-bold">
-                {totalDebt > 0 ? `$${totalDebt.toLocaleString()}` : "—"}
+                {totalDebt > 0 ? `$${totalDebt.toLocaleString(undefined, { maximumFractionDigits: 0 })}` : "—"}
               </div>
               <div className="text-sm text-muted-foreground">Total Debt</div>
             </div>
@@ -286,10 +464,10 @@ export default function CaseFinancialPage() {
       {hasFinancialData && (
         <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-8">
           <div className={`p-4 rounded-lg border ${
-            totalMonthlyIncome === 0 && totalMonthlyExpenses === 0 
-              ? 'bg-muted/50' 
-              : disposableIncome >= 0 
-                ? 'bg-green-50 border-green-200' 
+            totalMonthlyIncome === 0 && totalMonthlyExpenses === 0
+              ? 'bg-muted/50'
+              : disposableIncome >= 0
+                ? 'bg-green-50 border-green-200'
                 : 'bg-red-50 border-red-200'
           }`}>
             <div className="flex items-center justify-between">
@@ -298,13 +476,13 @@ export default function CaseFinancialPage() {
                 <div className={`text-2xl font-bold ${
                   totalMonthlyIncome === 0 && totalMonthlyExpenses === 0
                     ? 'text-muted-foreground'
-                    : disposableIncome >= 0 
-                      ? 'text-green-700' 
+                    : disposableIncome >= 0
+                      ? 'text-green-700'
                       : 'text-red-700'
                 }`}>
-                  {totalMonthlyIncome === 0 && totalMonthlyExpenses === 0 
-                    ? "—" 
-                    : `$${Math.abs(disposableIncome).toLocaleString()}/mo`}
+                  {totalMonthlyIncome === 0 && totalMonthlyExpenses === 0
+                    ? "—"
+                    : `${disposableIncome < 0 ? '-' : ''}$${Math.abs(disposableIncome).toLocaleString(undefined, { maximumFractionDigits: 0 })}/mo`}
                 </div>
               </div>
               {totalMonthlyIncome > 0 || totalMonthlyExpenses > 0 ? (
@@ -318,7 +496,7 @@ export default function CaseFinancialPage() {
             <p className="text-sm text-muted-foreground mt-2">
               {totalMonthlyIncome === 0 && totalMonthlyExpenses === 0
                 ? "Add income and expenses to calculate"
-                : disposableIncome >= 0 
+                : disposableIncome >= 0
                   ? "Client has positive cash flow after expenses"
                   : "Client is spending more than they earn"}
             </p>
@@ -334,8 +512,8 @@ export default function CaseFinancialPage() {
               </div>
               {annualIncome > 0 && totalDebt > 0 && (
                 <div className={`px-3 py-1 rounded-full text-sm font-medium ${
-                  Number(debtToIncomeRatio) > 50 ? 'bg-red-100 text-red-700' : 
-                  Number(debtToIncomeRatio) > 35 ? 'bg-yellow-100 text-yellow-700' : 
+                  Number(debtToIncomeRatio) > 50 ? 'bg-red-100 text-red-700' :
+                  Number(debtToIncomeRatio) > 35 ? 'bg-yellow-100 text-yellow-700' :
                   'bg-green-100 text-green-700'
                 }`}>
                   {Number(debtToIncomeRatio) > 50 ? 'High' : Number(debtToIncomeRatio) > 35 ? 'Moderate' : 'Low'}
@@ -343,7 +521,7 @@ export default function CaseFinancialPage() {
               )}
             </div>
             <p className="text-sm text-muted-foreground mt-2">
-              {annualIncome > 0 && totalDebt > 0 
+              {annualIncome > 0 && totalDebt > 0
                 ? "Total debt relative to annual income"
                 : "Add income and debt data to calculate"}
             </p>
@@ -361,28 +539,38 @@ export default function CaseFinancialPage() {
               </div>
               <h2 className="text-xl font-semibold">Income Sources</h2>
             </div>
-            <button className="flex items-center gap-1 text-sm text-primary hover:underline">
+            <button
+              onClick={() => setAddIncomeOpen(true)}
+              className="flex items-center gap-1 text-sm text-primary hover:underline"
+            >
               <Plus className="w-4 h-4" />
               Add Source
             </button>
           </div>
-          
-          {incomeSources.length > 0 ? (
+
+          {incomeRecords.length > 0 ? (
             <>
               <div className="space-y-3">
-                {incomeSources.map((source) => (
-                  <div key={source.id} className="flex items-center justify-between p-3 bg-muted/50 rounded-lg">
+                {incomeRecords.map((record) => (
+                  <div key={record.id} className="flex items-center justify-between p-3 bg-muted/50 rounded-lg group">
                     <div className="flex items-center gap-3">
                       <div>
-                        <p className="font-medium">{source.name}</p>
-                        <p className="text-sm text-muted-foreground">Monthly</p>
+                        <p className="font-medium">{record.employer || record.incomeSource || 'Income'}</p>
+                        <p className="text-sm text-muted-foreground">
+                          {record.occupation || record.payPeriod || 'Monthly'}
+                        </p>
                       </div>
                     </div>
                     <div className="flex items-center gap-3">
-                      <span className="font-semibold">${source.amount.toLocaleString()}</span>
-                      {source.verified && (
-                        <span className="text-xs px-2 py-1 bg-green-100 text-green-700 rounded-full">Verified</span>
-                      )}
+                      <span className="font-semibold">
+                        ${calculateMonthlyIncome(record.grossPay, record.payPeriod).toLocaleString(undefined, { maximumFractionDigits: 0 })}/mo
+                      </span>
+                      <button
+                        onClick={() => handleDeleteClick('income', record.id, record.employer || 'Income')}
+                        className="opacity-0 group-hover:opacity-100 p-1 text-muted-foreground hover:text-red-600 transition-all"
+                      >
+                        <Trash2 className="w-4 h-4" />
+                      </button>
                     </div>
                   </div>
                 ))}
@@ -390,15 +578,15 @@ export default function CaseFinancialPage() {
               <div className="mt-4 pt-4 border-t">
                 <div className="flex justify-between text-sm">
                   <span className="text-muted-foreground">Annual Income</span>
-                  <span className="font-semibold">${annualIncome.toLocaleString()}</span>
+                  <span className="font-semibold">${annualIncome.toLocaleString(undefined, { maximumFractionDigits: 0 })}</span>
                 </div>
               </div>
             </>
           ) : (
-            <EmptyState 
-              title="No Income Sources" 
+            <EmptyState
+              title="No Income Sources"
               description="Add income sources to track earnings"
-              onAdd={() => {/* TODO: Open add income modal */}}
+              onAdd={() => setAddIncomeOpen(true)}
             />
           )}
         </div>
@@ -412,24 +600,43 @@ export default function CaseFinancialPage() {
               </div>
               <h2 className="text-xl font-semibold">Monthly Expenses</h2>
             </div>
-            <button className="flex items-center gap-1 text-sm text-primary hover:underline">
+            <button
+              onClick={() => setAddExpenseOpen(true)}
+              className="flex items-center gap-1 text-sm text-primary hover:underline"
+            >
               <Plus className="w-4 h-4" />
               Add Expense
             </button>
           </div>
-          
-          {expenses.length > 0 ? (
+
+          {expenseRecords.length > 0 ? (
             <>
               <div className="space-y-3">
-                {expenses.map((expense) => (
-                  <div key={expense.id} className="flex items-center justify-between p-3 bg-muted/50 rounded-lg">
-                    <div className="flex items-center gap-3">
-                      <expense.icon className="w-4 h-4 text-muted-foreground" />
-                      <span className="font-medium">{expense.name}</span>
+                {expenseRecords.map((expense) => {
+                  const IconComponent = CATEGORY_ICONS[expense.category] || DollarSign;
+                  return (
+                    <div key={expense.id} className="flex items-center justify-between p-3 bg-muted/50 rounded-lg group">
+                      <div className="flex items-center gap-3">
+                        <IconComponent className="w-4 h-4 text-muted-foreground" />
+                        <div>
+                          <span className="font-medium">{CATEGORY_LABELS[expense.category] || expense.category}</span>
+                          {expense.description && (
+                            <p className="text-sm text-muted-foreground">{expense.description}</p>
+                          )}
+                        </div>
+                      </div>
+                      <div className="flex items-center gap-3">
+                        <span className="font-semibold">${Number(expense.monthlyAmount).toLocaleString()}</span>
+                        <button
+                          onClick={() => handleDeleteClick('expense', expense.id, CATEGORY_LABELS[expense.category] || expense.category)}
+                          className="opacity-0 group-hover:opacity-100 p-1 text-muted-foreground hover:text-red-600 transition-all"
+                        >
+                          <Trash2 className="w-4 h-4" />
+                        </button>
+                      </div>
                     </div>
-                    <span className="font-semibold">${expense.amount.toLocaleString()}</span>
-                  </div>
-                ))}
+                  );
+                })}
               </div>
               <div className="mt-4 pt-4 border-t">
                 <div className="flex justify-between">
@@ -439,10 +646,10 @@ export default function CaseFinancialPage() {
               </div>
             </>
           ) : (
-            <EmptyState 
-              title="No Expenses" 
+            <EmptyState
+              title="No Expenses"
               description="Add monthly expenses to track spending"
-              onAdd={() => {/* TODO: Open add expense modal */}}
+              onAdd={() => setAddExpenseOpen(true)}
             />
           )}
         </div>
@@ -456,24 +663,37 @@ export default function CaseFinancialPage() {
               </div>
               <h2 className="text-xl font-semibold">Assets</h2>
             </div>
-            <button className="flex items-center gap-1 text-sm text-primary hover:underline">
+            <button
+              onClick={() => setAddAssetOpen(true)}
+              className="flex items-center gap-1 text-sm text-primary hover:underline"
+            >
               <Plus className="w-4 h-4" />
               Add Asset
             </button>
           </div>
-          
-          {assets.length > 0 ? (
+
+          {assetRecords.length > 0 ? (
             <>
               <div className="space-y-3">
-                {assets.map((asset) => (
-                  <div key={asset.id} className="p-3 bg-muted/50 rounded-lg">
+                {assetRecords.map((asset) => (
+                  <div key={asset.id} className="p-3 bg-muted/50 rounded-lg group">
                     <div className="flex items-center justify-between mb-1">
-                      <span className="font-medium">{asset.name}</span>
-                      <span className="font-semibold">${asset.value.toLocaleString()}</span>
+                      <span className="font-medium">{asset.description}</span>
+                      <div className="flex items-center gap-3">
+                        <span className="font-semibold">${Number(asset.currentValue).toLocaleString()}</span>
+                        <button
+                          onClick={() => handleDeleteClick('asset', asset.id, asset.description)}
+                          className="opacity-0 group-hover:opacity-100 p-1 text-muted-foreground hover:text-red-600 transition-all"
+                        >
+                          <Trash2 className="w-4 h-4" />
+                        </button>
+                      </div>
                     </div>
                     <div className="flex items-center justify-between text-sm text-muted-foreground">
-                      <span>Exempt Amount</span>
-                      <span className="text-green-600">${asset.exempt.toLocaleString()}</span>
+                      <span className="capitalize">{asset.assetType.replace('_', ' ')}</span>
+                      {asset.ownershipPercentage < 100 && (
+                        <span>{asset.ownershipPercentage}% ownership</span>
+                      )}
                     </div>
                   </div>
                 ))}
@@ -483,17 +703,13 @@ export default function CaseFinancialPage() {
                   <span className="text-muted-foreground">Total Value</span>
                   <span className="font-semibold">${totalAssets.toLocaleString()}</span>
                 </div>
-                <div className="flex justify-between text-sm">
-                  <span className="text-muted-foreground">Total Exempt</span>
-                  <span className="font-semibold text-green-600">${totalExempt.toLocaleString()}</span>
-                </div>
               </div>
             </>
           ) : (
-            <EmptyState 
-              title="No Assets" 
+            <EmptyState
+              title="No Assets"
               description="Add assets like property, vehicles, and accounts"
-              onAdd={() => {/* TODO: Open add asset modal */}}
+              onAdd={() => setAddAssetOpen(true)}
             />
           )}
         </div>
@@ -507,29 +723,47 @@ export default function CaseFinancialPage() {
               </div>
               <h2 className="text-xl font-semibold">Debts</h2>
             </div>
-            <button className="flex items-center gap-1 text-sm text-primary hover:underline">
+            <button
+              onClick={() => setAddDebtOpen(true)}
+              className="flex items-center gap-1 text-sm text-primary hover:underline"
+            >
               <Plus className="w-4 h-4" />
               Add Debt
             </button>
           </div>
-          
-          {debts.length > 0 ? (
+
+          {debtRecords.length > 0 ? (
             <>
               <div className="space-y-3 max-h-[300px] overflow-y-auto">
-                {debts.map((debt) => (
-                  <div key={debt.id} className="p-3 bg-muted/50 rounded-lg">
+                {debtRecords.map((debt) => (
+                  <div key={debt.id} className="p-3 bg-muted/50 rounded-lg group">
                     <div className="flex items-center justify-between mb-1">
-                      <span className="font-medium text-sm">{debt.name}</span>
-                      <span className="font-semibold">${debt.balance.toLocaleString()}</span>
+                      <span className="font-medium text-sm">{debt.creditorName}</span>
+                      <div className="flex items-center gap-3">
+                        <span className="font-semibold">${Number(debt.balance).toLocaleString()}</span>
+                        <button
+                          onClick={() => handleDeleteClick('debt', debt.id, debt.creditorName)}
+                          className="opacity-0 group-hover:opacity-100 p-1 text-muted-foreground hover:text-red-600 transition-all"
+                        >
+                          <Trash2 className="w-4 h-4" />
+                        </button>
+                      </div>
                     </div>
                     <div className="flex items-center justify-between text-sm">
-                      <span className={`px-2 py-0.5 rounded text-xs ${
-                        debt.type === 'secured' ? 'bg-blue-100 text-blue-700' : 'bg-gray-100 text-gray-700'
-                      }`}>
-                        {debt.type}
-                      </span>
-                      {debt.monthly > 0 && (
-                        <span className="text-muted-foreground">${debt.monthly}/mo</span>
+                      <div className="flex items-center gap-2">
+                        <span className={`px-2 py-0.5 rounded text-xs ${
+                          debt.secured ? 'bg-blue-100 text-blue-700' : 'bg-gray-100 text-gray-700'
+                        }`}>
+                          {debt.secured ? 'Secured' : 'Unsecured'}
+                        </span>
+                        {debt.priority && (
+                          <span className="px-2 py-0.5 rounded text-xs bg-orange-100 text-orange-700">
+                            Priority
+                          </span>
+                        )}
+                      </div>
+                      {debt.monthlyPayment && Number(debt.monthlyPayment) > 0 && (
+                        <span className="text-muted-foreground">${Number(debt.monthlyPayment).toLocaleString()}/mo</span>
                       )}
                     </div>
                   </div>
@@ -551,10 +785,10 @@ export default function CaseFinancialPage() {
               </div>
             </>
           ) : (
-            <EmptyState 
-              title="No Debts" 
+            <EmptyState
+              title="No Debts"
               description="Add debts like mortgages, loans, and credit cards"
-              onAdd={() => {/* TODO: Open add debt modal */}}
+              onAdd={() => setAddDebtOpen(true)}
             />
           )}
         </div>

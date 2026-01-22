@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useState, useCallback } from "react";
 import { useParams, useRouter } from "next/navigation";
 import {
   Calculator,
@@ -35,21 +35,36 @@ interface BankruptcyCase {
   state: string | null;
 }
 
-// Helper function to get median income by state and household size
-function getMedianIncome(state: string, householdSize: number): number {
-  // 2024 Census Bureau median income data (simplified)
-  const medianIncomes: Record<string, number[]> = {
-    CA: [62677, 82476, 92236, 102368, 107386],
-    TX: [54727, 71998, 80478, 89420, 93891],
-    NY: [60129, 79108, 88441, 98268, 103181],
-    FL: [52594, 69191, 77351, 85946, 90243],
-    // Default for other states
-    DEFAULT: [55000, 72000, 80000, 89000, 93000],
+interface MeansTestData {
+  caseId: string;
+  calculatedAt: string;
+  inputs: {
+    state: string;
+    householdSize: number;
+    monthlyGrossIncome: number;
+    monthlyExpenses: number;
+    totalUnsecuredDebt: number;
+    totalSecuredDebt: number;
+    hasVehicle: boolean;
+    vehicleCount: number;
   };
-
-  const stateData = medianIncomes[state] || medianIncomes.DEFAULT;
-  const index = Math.min(householdSize - 1, stateData.length - 1);
-  return stateData[index];
+  irsAllowances: {
+    nationalStandards: number;
+    housingUtilities: number;
+    transportation: number;
+    healthCare: number;
+    total: number;
+  };
+  result: {
+    passes: boolean;
+    annualIncome: number;
+    medianIncome: number;
+    isAboveMedian: boolean;
+    monthlyDisposableIncome?: number;
+    sixtyMonthDisposable?: number;
+    presumptionOfAbuse: boolean;
+    reason: string;
+  };
 }
 
 export default function CaseMeansTestPage() {
@@ -58,14 +73,35 @@ export default function CaseMeansTestPage() {
   const id = params.id as string;
 
   const [caseData, setCaseData] = useState<BankruptcyCase | null>(null);
+  const [meansTestData, setMeansTestData] = useState<MeansTestData | null>(null);
   const [loading, setLoading] = useState(true);
+  const [calculating, setCalculating] = useState(false);
   const [error, setError] = useState<string | null>(null);
+
+  const connectionString = typeof window !== 'undefined' ? localStorage.getItem("bankruptcy_db_connection") : null;
+
+  const fetchMeansTest = useCallback(async () => {
+    if (!connectionString) return;
+
+    try {
+      const response = await fetch(
+        `/api/cases/${id}/means-test?connectionString=${encodeURIComponent(connectionString)}`
+      );
+
+      if (response.ok) {
+        const data = await response.json();
+        setMeansTestData(data);
+      }
+    } catch (err) {
+      console.error("Error fetching means test:", err);
+    }
+  }, [id, connectionString]);
 
   useEffect(() => {
     const apiKey = localStorage.getItem("casedev_api_key");
-    const connectionString = localStorage.getItem("bankruptcy_db_connection");
+    const connStr = localStorage.getItem("bankruptcy_db_connection");
 
-    if (!apiKey || !connectionString) {
+    if (!apiKey || !connStr) {
       router.push("/login");
       return;
     }
@@ -73,7 +109,7 @@ export default function CaseMeansTestPage() {
     async function fetchCase() {
       try {
         const response = await fetch(
-          `/api/cases/${id}?connectionString=${encodeURIComponent(connectionString!)}`
+          `/api/cases/${id}?connectionString=${encodeURIComponent(connStr!)}`
         );
 
         if (!response.ok) {
@@ -96,7 +132,29 @@ export default function CaseMeansTestPage() {
     }
 
     fetchCase();
-  }, [id, router]);
+    fetchMeansTest();
+  }, [id, router, fetchMeansTest]);
+
+  const handleRecalculate = async () => {
+    if (!connectionString) return;
+
+    setCalculating(true);
+    try {
+      const response = await fetch(
+        `/api/cases/${id}/means-test?connectionString=${encodeURIComponent(connectionString)}`,
+        { method: 'POST' }
+      );
+
+      if (response.ok) {
+        const data = await response.json();
+        setMeansTestData(data);
+      }
+    } catch (err) {
+      console.error("Error recalculating means test:", err);
+    } finally {
+      setCalculating(false);
+    }
+  };
 
   if (loading) {
     return (
@@ -120,71 +178,15 @@ export default function CaseMeansTestPage() {
     );
   }
 
-  // Means test data - uses actual case data from database
-  // IRS National/Local Standards are legitimate reference data (not user-specific)
-  const meansTestData = {
-    // Step 1: Income comparison
-    annualIncome: (caseData.monthlyIncome || 0) * 12,
-    householdSize: caseData.householdSize || 1,
-    state: caseData.state || "—",
-    medianIncome: caseData.state ? getMedianIncome(caseData.state, caseData.householdSize || 1) : 0,
-    
-    // Step 2: Disposable income calculation (if above median)
-    currentMonthlyIncome: caseData.monthlyIncome || 0,
-    // IRS National Standards (2024) - these are official reference values, not user data
-    allowedDeductions: {
-      nationalStandards: {
-        food: 733,
-        housekeeping: 40,
-        apparel: 186,
-        personalCare: 44,
-        miscellaneous: 149,
-      },
-      // IRS Local Standards vary by state - using defaults until state-specific data is loaded
-      localStandards: {
-        housing: 1800,
-        utilities: 350,
-        transportation: 650,
-      },
-      // Other expenses should come from user's financial data
-      otherExpenses: {
-        healthInsurance: 0, // Should be entered by user in financial section
-        childcare: 0,
-        courtOrderedPayments: 0,
-        education: 0,
-      },
-    },
-    // Secured debt payments should come from user's debt data (mortgage, car loans, etc.)
-    // This will be 0 until user enters their secured debts in the financial section
-    securedDebtPayments: 0,
-    priorityDebtPayments: 0,
-    
-    // Results
-    passesStep1: false,
-    passesStep2: false,
-    disposableIncome: 0,
-    recommendation: "pending",
-  };
-
-  // Calculate if passes Step 1 (below median income)
-  meansTestData.passesStep1 = meansTestData.annualIncome <= meansTestData.medianIncome;
-
-  // Calculate Step 2 if needed
-  if (!meansTestData.passesStep1) {
-    const totalDeductions = 
-      Object.values(meansTestData.allowedDeductions.nationalStandards).reduce((a, b) => a + b, 0) +
-      Object.values(meansTestData.allowedDeductions.localStandards).reduce((a, b) => a + b, 0) +
-      Object.values(meansTestData.allowedDeductions.otherExpenses).reduce((a, b) => a + b, 0) +
-      meansTestData.securedDebtPayments +
-      meansTestData.priorityDebtPayments;
-    
-    meansTestData.disposableIncome = meansTestData.currentMonthlyIncome - totalDeductions;
-    meansTestData.passesStep2 = meansTestData.disposableIncome < 0 || 
-      (meansTestData.disposableIncome * 60 < 8175); // Less than $8,175 over 60 months
-  }
-
-  const passesTest = meansTestData.passesStep1 || meansTestData.passesStep2;
-  meansTestData.recommendation = passesTest ? "chapter7_eligible" : "chapter13_recommended";
+  // Use calculated data if available, otherwise show placeholder
+  const hasData = meansTestData !== null;
+  const passesTest = meansTestData?.result.passes ?? false;
+  const isAboveMedian = meansTestData?.result.isAboveMedian ?? false;
+  const annualIncome = meansTestData?.result.annualIncome ?? 0;
+  const medianIncome = meansTestData?.result.medianIncome ?? 0;
+  const monthlyDisposableIncome = meansTestData?.result.monthlyDisposableIncome ?? 0;
+  const state = meansTestData?.inputs.state ?? caseData.state ?? "—";
+  const householdSize = meansTestData?.inputs.householdSize ?? caseData.householdSize ?? 1;
 
   return (
     <div className="container mx-auto p-6 max-w-7xl">
@@ -209,8 +211,16 @@ export default function CaseMeansTestPage() {
             </p>
           </div>
           <div className="flex items-center gap-3">
-            <button className="flex items-center gap-2 px-4 py-2 border rounded-lg hover:bg-muted transition-colors">
-              <RefreshCw className="w-4 h-4" />
+            <button
+              onClick={handleRecalculate}
+              disabled={calculating}
+              className="flex items-center gap-2 px-4 py-2 border rounded-lg hover:bg-muted transition-colors disabled:opacity-50"
+            >
+              {calculating ? (
+                <Loader2 className="w-4 h-4 animate-spin" />
+              ) : (
+                <RefreshCw className="w-4 h-4" />
+              )}
               Recalculate
             </button>
             <button className="flex items-center gap-2 px-4 py-2 bg-primary text-primary-foreground rounded-lg hover:bg-primary/90 transition-colors">
@@ -221,45 +231,70 @@ export default function CaseMeansTestPage() {
         </div>
       </div>
 
-      {/* Result Banner */}
-      <div className={`p-6 rounded-lg border mb-8 ${
-        passesTest 
-          ? 'bg-green-50 border-green-200' 
-          : 'bg-yellow-50 border-yellow-200'
-      }`}>
-        <div className="flex items-start gap-4">
-          {passesTest ? (
-            <CheckCircle className="w-8 h-8 text-green-600 flex-shrink-0" />
-          ) : (
+      {/* No Data Warning */}
+      {!hasData && (
+        <div className="p-6 rounded-lg border bg-yellow-50 border-yellow-200 mb-8">
+          <div className="flex items-start gap-4">
             <AlertTriangle className="w-8 h-8 text-yellow-600 flex-shrink-0" />
-          )}
-          <div className="flex-1">
-            <h2 className={`text-xl font-bold ${passesTest ? 'text-green-800' : 'text-yellow-800'}`}>
-              {passesTest 
-                ? "Client Qualifies for Chapter 7 Bankruptcy" 
-                : "Chapter 13 May Be More Appropriate"}
-            </h2>
-            <p className={`mt-1 ${passesTest ? 'text-green-700' : 'text-yellow-700'}`}>
-              {passesTest 
-                ? meansTestData.passesStep1
-                  ? "Income is below the state median - automatic qualification."
-                  : "Disposable income is below the threshold after allowed deductions."
-                : "Client's disposable income exceeds Chapter 7 limits. Consider Chapter 13 repayment plan."}
-            </p>
+            <div>
+              <h2 className="text-lg font-semibold text-yellow-800">Financial Data Required</h2>
+              <p className="text-yellow-700 mt-1">
+                Add income, expenses, and debt information in the Financial Data section to calculate the means test.
+              </p>
+              <Link
+                href={`/cases/${id}/financial`}
+                className="inline-flex items-center gap-2 mt-3 text-yellow-800 font-medium hover:underline"
+              >
+                Go to Financial Data
+                <ArrowRight className="w-4 h-4" />
+              </Link>
+            </div>
           </div>
-          <Link
-            href={`/cases/${id}/forms`}
-            className={`flex items-center gap-2 px-4 py-2 rounded-lg font-medium ${
-              passesTest 
-                ? 'bg-green-600 text-white hover:bg-green-700' 
-                : 'bg-yellow-600 text-white hover:bg-yellow-700'
-            }`}
-          >
-            Proceed to Forms
-            <ArrowRight className="w-4 h-4" />
-          </Link>
         </div>
-      </div>
+      )}
+
+      {/* Result Banner */}
+      {hasData && (
+        <div className={`p-6 rounded-lg border mb-8 ${
+          passesTest
+            ? 'bg-green-50 border-green-200'
+            : 'bg-yellow-50 border-yellow-200'
+        }`}>
+          <div className="flex items-start gap-4">
+            {passesTest ? (
+              <CheckCircle className="w-8 h-8 text-green-600 flex-shrink-0" />
+            ) : (
+              <AlertTriangle className="w-8 h-8 text-yellow-600 flex-shrink-0" />
+            )}
+            <div className="flex-1">
+              <h2 className={`text-xl font-bold ${passesTest ? 'text-green-800' : 'text-yellow-800'}`}>
+                {passesTest
+                  ? "Client Qualifies for Chapter 7 Bankruptcy"
+                  : "Chapter 13 May Be More Appropriate"}
+              </h2>
+              <p className={`mt-1 ${passesTest ? 'text-green-700' : 'text-yellow-700'}`}>
+                {meansTestData?.result.reason}
+              </p>
+              {meansTestData?.calculatedAt && (
+                <p className="text-sm text-muted-foreground mt-2">
+                  Last calculated: {new Date(meansTestData.calculatedAt).toLocaleString()}
+                </p>
+              )}
+            </div>
+            <Link
+              href={`/cases/${id}/forms`}
+              className={`flex items-center gap-2 px-4 py-2 rounded-lg font-medium ${
+                passesTest
+                  ? 'bg-green-600 text-white hover:bg-green-700'
+                  : 'bg-yellow-600 text-white hover:bg-yellow-700'
+              }`}
+            >
+              Proceed to Forms
+              <ArrowRight className="w-4 h-4" />
+            </Link>
+          </div>
+        </div>
+      )}
 
       {/* Input Summary */}
       <div className="grid grid-cols-1 md:grid-cols-4 gap-4 mb-8">
@@ -269,7 +304,9 @@ export default function CaseMeansTestPage() {
               <DollarSign className="w-5 h-5 text-blue-600" />
             </div>
             <div>
-              <div className="text-2xl font-bold">${meansTestData.annualIncome.toLocaleString()}</div>
+              <div className="text-2xl font-bold">
+                {annualIncome > 0 ? `$${annualIncome.toLocaleString(undefined, { maximumFractionDigits: 0 })}` : "—"}
+              </div>
               <div className="text-sm text-muted-foreground">Annual Income</div>
             </div>
           </div>
@@ -281,7 +318,7 @@ export default function CaseMeansTestPage() {
               <Users className="w-5 h-5 text-purple-600" />
             </div>
             <div>
-              <div className="text-2xl font-bold">{meansTestData.householdSize}</div>
+              <div className="text-2xl font-bold">{householdSize}</div>
               <div className="text-sm text-muted-foreground">Household Size</div>
             </div>
           </div>
@@ -293,7 +330,7 @@ export default function CaseMeansTestPage() {
               <MapPin className="w-5 h-5 text-green-600" />
             </div>
             <div>
-              <div className="text-2xl font-bold">{meansTestData.state}</div>
+              <div className="text-2xl font-bold">{state}</div>
               <div className="text-sm text-muted-foreground">State</div>
             </div>
           </div>
@@ -305,7 +342,9 @@ export default function CaseMeansTestPage() {
               <Calculator className="w-5 h-5 text-orange-600" />
             </div>
             <div>
-              <div className="text-2xl font-bold">${meansTestData.medianIncome.toLocaleString()}</div>
+              <div className="text-2xl font-bold">
+                {medianIncome > 0 ? `$${medianIncome.toLocaleString(undefined, { maximumFractionDigits: 0 })}` : "—"}
+              </div>
               <div className="text-sm text-muted-foreground">State Median</div>
             </div>
           </div>
@@ -316,8 +355,10 @@ export default function CaseMeansTestPage() {
         {/* Step 1: Income Comparison */}
         <div className="bg-card p-6 rounded-lg border">
           <div className="flex items-center gap-3 mb-6">
-            <div className={`p-2 rounded-lg ${meansTestData.passesStep1 ? 'bg-green-100' : 'bg-yellow-100'}`}>
-              {meansTestData.passesStep1 ? (
+            <div className={`p-2 rounded-lg ${!hasData ? 'bg-gray-100' : !isAboveMedian ? 'bg-green-100' : 'bg-yellow-100'}`}>
+              {!hasData ? (
+                <Calculator className="w-5 h-5 text-gray-400" />
+              ) : !isAboveMedian ? (
                 <CheckCircle className="w-5 h-5 text-green-600" />
               ) : (
                 <XCircle className="w-5 h-5 text-yellow-600" />
@@ -329,58 +370,65 @@ export default function CaseMeansTestPage() {
             </div>
           </div>
 
-          <div className="space-y-4">
-            <div className="p-4 bg-muted/50 rounded-lg">
-              <div className="flex justify-between items-center mb-2">
-                <span className="text-sm text-muted-foreground">Client&apos;s Annual Income</span>
-                <span className="font-semibold">${meansTestData.annualIncome.toLocaleString()}</span>
-              </div>
-              <div className="flex justify-between items-center mb-2">
-                <span className="text-sm text-muted-foreground">
-                  {meansTestData.state} Median ({meansTestData.householdSize} person household)
-                </span>
-                <span className="font-semibold">${meansTestData.medianIncome.toLocaleString()}</span>
-              </div>
-              <div className="border-t pt-2 mt-2">
-                <div className="flex justify-between items-center">
-                  <span className="font-medium">Difference</span>
-                  <span className={`font-bold ${
-                    meansTestData.annualIncome <= meansTestData.medianIncome 
-                      ? 'text-green-600' 
-                      : 'text-red-600'
-                  }`}>
-                    {meansTestData.annualIncome <= meansTestData.medianIncome ? '-' : '+'}
-                    ${Math.abs(meansTestData.annualIncome - meansTestData.medianIncome).toLocaleString()}
+          {hasData ? (
+            <div className="space-y-4">
+              <div className="p-4 bg-muted/50 rounded-lg">
+                <div className="flex justify-between items-center mb-2">
+                  <span className="text-sm text-muted-foreground">Client&apos;s Annual Income</span>
+                  <span className="font-semibold">${annualIncome.toLocaleString(undefined, { maximumFractionDigits: 0 })}</span>
+                </div>
+                <div className="flex justify-between items-center mb-2">
+                  <span className="text-sm text-muted-foreground">
+                    {state} Median ({householdSize} person household)
                   </span>
+                  <span className="font-semibold">${medianIncome.toLocaleString(undefined, { maximumFractionDigits: 0 })}</span>
+                </div>
+                <div className="border-t pt-2 mt-2">
+                  <div className="flex justify-between items-center">
+                    <span className="font-medium">Difference</span>
+                    <span className={`font-bold ${
+                      annualIncome <= medianIncome
+                        ? 'text-green-600'
+                        : 'text-red-600'
+                    }`}>
+                      {annualIncome <= medianIncome ? '-' : '+'}
+                      ${Math.abs(annualIncome - medianIncome).toLocaleString(undefined, { maximumFractionDigits: 0 })}
+                    </span>
+                  </div>
                 </div>
               </div>
-            </div>
 
-            <div className={`p-4 rounded-lg ${
-              meansTestData.passesStep1 ? 'bg-green-50 border border-green-200' : 'bg-yellow-50 border border-yellow-200'
-            }`}>
-              <p className={`text-sm font-medium ${meansTestData.passesStep1 ? 'text-green-700' : 'text-yellow-700'}`}>
-                {meansTestData.passesStep1 
-                  ? "✓ Income is below state median. Client automatically qualifies for Chapter 7."
-                  : "⚠ Income exceeds state median. Proceed to Step 2 for detailed analysis."}
-              </p>
+              <div className={`p-4 rounded-lg ${
+                !isAboveMedian ? 'bg-green-50 border border-green-200' : 'bg-yellow-50 border border-yellow-200'
+              }`}>
+                <p className={`text-sm font-medium ${!isAboveMedian ? 'text-green-700' : 'text-yellow-700'}`}>
+                  {!isAboveMedian
+                    ? "Income is below state median. Client automatically qualifies for Chapter 7."
+                    : "Income exceeds state median. Proceed to Step 2 for detailed analysis."}
+                </p>
+              </div>
             </div>
-          </div>
+          ) : (
+            <div className="text-center py-8 text-muted-foreground">
+              <Calculator className="w-12 h-12 mx-auto mb-4 opacity-50" />
+              <p>Add financial data to calculate</p>
+            </div>
+          )}
         </div>
 
         {/* Step 2: Disposable Income */}
-        <div className={`bg-card p-6 rounded-lg border ${meansTestData.passesStep1 ? 'opacity-50' : ''}`}>
+        <div className={`bg-card p-6 rounded-lg border ${!hasData || !isAboveMedian ? 'opacity-50' : ''}`}>
           <div className="flex items-center gap-3 mb-6">
             <div className={`p-2 rounded-lg ${
-              meansTestData.passesStep1 
-                ? 'bg-gray-100' 
-                : meansTestData.passesStep2 
-                  ? 'bg-green-100' 
+              !hasData || !isAboveMedian
+                ? 'bg-gray-100'
+                : passesTest
+                  ? 'bg-green-100'
                   : 'bg-red-100'
             }`}>
-              {meansTestData.passesStep1 ? (
+              {!hasData || !isAboveMedian ? (
                 <Calculator className="w-5 h-5 text-gray-400" />
-              ) : meansTestData.passesStep2 ? (
+              ) : passesTest ? (
                 <CheckCircle className="w-5 h-5 text-green-600" />
               ) : (
                 <XCircle className="w-5 h-5 text-red-600" />
@@ -392,72 +440,88 @@ export default function CaseMeansTestPage() {
             </div>
           </div>
 
-          {meansTestData.passesStep1 ? (
+          {!hasData || !isAboveMedian ? (
             <div className="text-center py-8 text-muted-foreground">
               <Calculator className="w-12 h-12 mx-auto mb-4 opacity-50" />
               <p>Step 2 not required</p>
-              <p className="text-sm">Client qualifies based on Step 1</p>
+              <p className="text-sm">{!hasData ? "Add financial data first" : "Client qualifies based on Step 1"}</p>
             </div>
           ) : (
             <div className="space-y-4">
               <div className="p-4 bg-muted/50 rounded-lg space-y-2">
                 <div className="flex justify-between items-center">
                   <span className="text-sm text-muted-foreground">Monthly Income</span>
-                  <span className="font-semibold">${meansTestData.currentMonthlyIncome.toLocaleString()}</span>
+                  <span className="font-semibold">
+                    ${meansTestData?.inputs.monthlyGrossIncome.toLocaleString(undefined, { maximumFractionDigits: 0 })}
+                  </span>
                 </div>
                 <div className="flex justify-between items-center text-sm">
+                  <span className="text-muted-foreground">IRS Allowances (Total)</span>
+                  <span className="text-red-600">
+                    -${meansTestData?.irsAllowances.total.toLocaleString(undefined, { maximumFractionDigits: 0 })}
+                  </span>
+                </div>
+                <div className="flex justify-between items-center text-sm pl-4">
                   <span className="text-muted-foreground">National Standards</span>
-                  <span className="text-red-600">
-                    -${Object.values(meansTestData.allowedDeductions.nationalStandards).reduce((a, b) => a + b, 0).toLocaleString()}
+                  <span className="text-muted-foreground">
+                    ${meansTestData?.irsAllowances.nationalStandards.toLocaleString()}
                   </span>
                 </div>
-                <div className="flex justify-between items-center text-sm">
-                  <span className="text-muted-foreground">Local Standards</span>
-                  <span className="text-red-600">
-                    -${Object.values(meansTestData.allowedDeductions.localStandards).reduce((a, b) => a + b, 0).toLocaleString()}
+                <div className="flex justify-between items-center text-sm pl-4">
+                  <span className="text-muted-foreground">Housing & Utilities</span>
+                  <span className="text-muted-foreground">
+                    ${meansTestData?.irsAllowances.housingUtilities.toLocaleString()}
                   </span>
                 </div>
-                <div className="flex justify-between items-center text-sm">
-                  <span className="text-muted-foreground">Other Expenses</span>
-                  <span className="text-red-600">
-                    -${Object.values(meansTestData.allowedDeductions.otherExpenses).reduce((a, b) => a + b, 0).toLocaleString()}
+                <div className="flex justify-between items-center text-sm pl-4">
+                  <span className="text-muted-foreground">Transportation</span>
+                  <span className="text-muted-foreground">
+                    ${meansTestData?.irsAllowances.transportation.toLocaleString()}
                   </span>
                 </div>
-                <div className="flex justify-between items-center text-sm">
-                  <span className="text-muted-foreground">Secured Debt Payments</span>
-                  <span className="text-red-600">-${meansTestData.securedDebtPayments.toLocaleString()}</span>
+                <div className="flex justify-between items-center text-sm pl-4">
+                  <span className="text-muted-foreground">Health Care</span>
+                  <span className="text-muted-foreground">
+                    ${meansTestData?.irsAllowances.healthCare.toLocaleString()}
+                  </span>
                 </div>
                 <div className="border-t pt-2 mt-2">
                   <div className="flex justify-between items-center">
-                    <span className="font-medium">Disposable Income</span>
-                    <span className={`font-bold ${meansTestData.disposableIncome < 0 ? 'text-green-600' : 'text-red-600'}`}>
-                      ${meansTestData.disposableIncome.toLocaleString()}/mo
+                    <span className="font-medium">Monthly Disposable Income</span>
+                    <span className={`font-bold ${monthlyDisposableIncome <= 0 ? 'text-green-600' : 'text-red-600'}`}>
+                      ${monthlyDisposableIncome.toLocaleString(undefined, { maximumFractionDigits: 0 })}/mo
+                    </span>
+                  </div>
+                  <div className="flex justify-between items-center mt-1">
+                    <span className="text-sm text-muted-foreground">60-Month Total</span>
+                    <span className="text-sm">
+                      ${((meansTestData?.result.sixtyMonthDisposable ?? 0)).toLocaleString(undefined, { maximumFractionDigits: 0 })}
                     </span>
                   </div>
                 </div>
               </div>
 
               <div className={`p-4 rounded-lg ${
-                meansTestData.passesStep2 ? 'bg-green-50 border border-green-200' : 'bg-red-50 border border-red-200'
+                passesTest ? 'bg-green-50 border border-green-200' : 'bg-red-50 border border-red-200'
               }`}>
-                <p className={`text-sm font-medium ${meansTestData.passesStep2 ? 'text-green-700' : 'text-red-700'}`}>
-                  {meansTestData.passesStep2 
-                    ? "✓ Disposable income is below threshold. Client qualifies for Chapter 7."
-                    : "✗ Disposable income exceeds threshold. Chapter 13 is recommended."}
+                <p className={`text-sm font-medium ${passesTest ? 'text-green-700' : 'text-red-700'}`}>
+                  {passesTest
+                    ? "Disposable income is below threshold. Client qualifies for Chapter 7."
+                    : "Presumption of abuse applies. Chapter 13 is recommended."}
                 </p>
               </div>
             </div>
           )}
         </div>
 
-        {/* Deduction Details */}
+        {/* IRS Allowances Detail */}
         <div className="bg-card p-6 rounded-lg border">
           <div className="flex items-center justify-between mb-6">
             <div className="flex items-center gap-3">
               <div className="p-2 bg-blue-100 rounded-lg">
                 <FileText className="w-5 h-5 text-blue-600" />
               </div>
-              <h2 className="text-xl font-semibold">Allowed Deductions</h2>
+              <h2 className="text-xl font-semibold">IRS Standard Allowances</h2>
             </div>
             <button className="text-sm text-primary hover:underline flex items-center gap-1">
               <HelpCircle className="w-4 h-4" />
@@ -465,31 +529,43 @@ export default function CaseMeansTestPage() {
             </button>
           </div>
 
-          <div className="space-y-4">
-            <div>
-              <h3 className="font-medium mb-2 text-sm text-muted-foreground">National Standards</h3>
-              <div className="space-y-2">
-                {Object.entries(meansTestData.allowedDeductions.nationalStandards).map(([key, value]) => (
-                  <div key={key} className="flex justify-between text-sm p-2 bg-muted/50 rounded">
-                    <span className="capitalize">{key.replace(/([A-Z])/g, ' $1').trim()}</span>
-                    <span>${value.toLocaleString()}</span>
+          {hasData && meansTestData?.irsAllowances ? (
+            <div className="space-y-4">
+              <div>
+                <h3 className="font-medium mb-2 text-sm text-muted-foreground">Allowance Breakdown</h3>
+                <div className="space-y-2">
+                  <div className="flex justify-between text-sm p-2 bg-muted/50 rounded">
+                    <span>National Standards (food, clothing, etc.)</span>
+                    <span>${meansTestData.irsAllowances.nationalStandards.toLocaleString()}</span>
                   </div>
-                ))}
+                  <div className="flex justify-between text-sm p-2 bg-muted/50 rounded">
+                    <span>Housing & Utilities ({state})</span>
+                    <span>${meansTestData.irsAllowances.housingUtilities.toLocaleString()}</span>
+                  </div>
+                  <div className="flex justify-between text-sm p-2 bg-muted/50 rounded">
+                    <span>Transportation ({meansTestData.inputs.vehicleCount || 1} vehicle{(meansTestData.inputs.vehicleCount || 1) > 1 ? 's' : ''})</span>
+                    <span>${meansTestData.irsAllowances.transportation.toLocaleString()}</span>
+                  </div>
+                  <div className="flex justify-between text-sm p-2 bg-muted/50 rounded">
+                    <span>Health Care</span>
+                    <span>${meansTestData.irsAllowances.healthCare.toLocaleString()}</span>
+                  </div>
+                </div>
               </div>
-            </div>
 
-            <div>
-              <h3 className="font-medium mb-2 text-sm text-muted-foreground">Local Standards ({meansTestData.state})</h3>
-              <div className="space-y-2">
-                {Object.entries(meansTestData.allowedDeductions.localStandards).map(([key, value]) => (
-                  <div key={key} className="flex justify-between text-sm p-2 bg-muted/50 rounded">
-                    <span className="capitalize">{key}</span>
-                    <span>${value.toLocaleString()}</span>
-                  </div>
-                ))}
+              <div className="border-t pt-4">
+                <div className="flex justify-between font-medium">
+                  <span>Total Monthly Allowances</span>
+                  <span>${meansTestData.irsAllowances.total.toLocaleString()}</span>
+                </div>
               </div>
             </div>
-          </div>
+          ) : (
+            <div className="text-center py-8 text-muted-foreground">
+              <FileText className="w-12 h-12 mx-auto mb-4 opacity-50" />
+              <p>Add financial data to see allowances</p>
+            </div>
+          )}
         </div>
 
         {/* Next Steps */}
@@ -502,19 +578,45 @@ export default function CaseMeansTestPage() {
           </div>
 
           <div className="space-y-4">
-            {passesTest ? (
+            {!hasData ? (
               <>
                 <div className="flex items-start gap-3 p-3 bg-muted/50 rounded-lg">
                   <div className="w-6 h-6 rounded-full bg-primary text-primary-foreground flex items-center justify-center text-sm font-medium">1</div>
                   <div>
-                    <p className="font-medium">Review Financial Data</p>
-                    <p className="text-sm text-muted-foreground">Verify all income and expense information is accurate</p>
+                    <p className="font-medium">Add Financial Data</p>
+                    <p className="text-sm text-muted-foreground">Enter income, expenses, assets, and debts</p>
+                  </div>
+                </div>
+                <div className="flex items-start gap-3 p-3 bg-muted/50 rounded-lg">
+                  <div className="w-6 h-6 rounded-full bg-muted text-muted-foreground flex items-center justify-center text-sm font-medium">2</div>
+                  <div>
+                    <p className="font-medium text-muted-foreground">Calculate Means Test</p>
+                    <p className="text-sm text-muted-foreground">Click Recalculate to run the analysis</p>
+                  </div>
+                </div>
+                <div className="flex items-start gap-3 p-3 bg-muted/50 rounded-lg">
+                  <div className="w-6 h-6 rounded-full bg-muted text-muted-foreground flex items-center justify-center text-sm font-medium">3</div>
+                  <div>
+                    <p className="font-medium text-muted-foreground">Generate Forms</p>
+                    <p className="text-sm text-muted-foreground">Auto-populate bankruptcy petition forms</p>
+                  </div>
+                </div>
+              </>
+            ) : passesTest ? (
+              <>
+                <div className="flex items-start gap-3 p-3 bg-muted/50 rounded-lg">
+                  <div className="w-6 h-6 rounded-full bg-green-500 text-white flex items-center justify-center text-sm font-medium">
+                    <CheckCircle className="w-4 h-4" />
+                  </div>
+                  <div>
+                    <p className="font-medium">Means Test Passed</p>
+                    <p className="text-sm text-muted-foreground">Client qualifies for Chapter 7</p>
                   </div>
                 </div>
                 <div className="flex items-start gap-3 p-3 bg-muted/50 rounded-lg">
                   <div className="w-6 h-6 rounded-full bg-primary text-primary-foreground flex items-center justify-center text-sm font-medium">2</div>
                   <div>
-                    <p className="font-medium">Complete Required Documents</p>
+                    <p className="font-medium">Review All Documents</p>
                     <p className="text-sm text-muted-foreground">Ensure all supporting documents are uploaded</p>
                   </div>
                 </div>

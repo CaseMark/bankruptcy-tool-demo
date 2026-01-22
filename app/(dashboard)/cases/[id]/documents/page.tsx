@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useState, useCallback } from "react";
 import { useRouter } from "next/navigation";
 import {
   FileText,
@@ -15,9 +15,11 @@ import {
   Eye,
   Trash2,
   Loader2,
+  X,
 } from "lucide-react";
 import Link from "next/link";
 import { DocumentUpload } from "@/components/cases/document-upload";
+import { DeleteConfirmationModal } from "@/components/cases/financial/delete-confirmation-modal";
 
 interface CaseData {
   id: string;
@@ -33,6 +35,7 @@ interface Document {
   validationStatus: string;
   uploadedAt: string;
   fileUrl: string | null;
+  vaultObjectId?: string | null;
 }
 
 export default function CaseDocumentsPage({
@@ -47,20 +50,48 @@ export default function CaseDocumentsPage({
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
+  // Action states
+  const [downloadingId, setDownloadingId] = useState<string | null>(null);
+  const [viewingDocument, setViewingDocument] = useState<Document | null>(null);
+  const [documentText, setDocumentText] = useState<string | null>(null);
+  const [loadingText, setLoadingText] = useState(false);
+
+  // Delete modal state
+  const [deleteModalOpen, setDeleteModalOpen] = useState(false);
+  const [documentToDelete, setDocumentToDelete] = useState<Document | null>(null);
+
+  const connectionString = typeof window !== 'undefined' ? localStorage.getItem("bankruptcy_db_connection") : null;
+  const apiKey = typeof window !== 'undefined' ? localStorage.getItem("casedev_api_key") : null;
+
   useEffect(() => {
     params.then((p) => setCaseId(p.id));
   }, [params]);
 
+  const fetchDocuments = useCallback(async () => {
+    if (!caseId || !connectionString) return;
+
+    try {
+      const docsResponse = await fetch(
+        `/api/cases/${caseId}/documents?connectionString=${encodeURIComponent(connectionString)}`
+      );
+
+      if (docsResponse.ok) {
+        const docsResult = await docsResponse.json();
+        setDocuments(docsResult.documents || []);
+      }
+    } catch (err) {
+      console.error("Error fetching documents:", err);
+    }
+  }, [caseId, connectionString]);
+
   useEffect(() => {
     if (!caseId) return;
 
-    const apiKey = localStorage.getItem("casedev_api_key");
     if (!apiKey) {
       router.push("/login");
       return;
     }
 
-    const connectionString = localStorage.getItem("bankruptcy_db_connection");
     if (!connectionString) {
       setError("Database not provisioned. Please go to settings to set up your database.");
       setLoading(false);
@@ -73,7 +104,7 @@ export default function CaseDocumentsPage({
         const caseResponse = await fetch(
           `/api/cases/${caseId}?connectionString=${encodeURIComponent(connectionString)}`
         );
-        
+
         if (!caseResponse.ok) {
           if (caseResponse.status === 404) {
             router.push("/cases");
@@ -81,19 +112,12 @@ export default function CaseDocumentsPage({
           }
           throw new Error("Failed to fetch case");
         }
-        
+
         const caseResult = await caseResponse.json();
         setCaseData(caseResult);
 
         // Fetch documents
-        const docsResponse = await fetch(
-          `/api/cases/${caseId}/documents?connectionString=${encodeURIComponent(connectionString)}`
-        );
-        
-        if (docsResponse.ok) {
-          const docsResult = await docsResponse.json();
-          setDocuments(docsResult.documents || []);
-        }
+        await fetchDocuments();
       } catch (err) {
         setError(err instanceof Error ? err.message : "An error occurred");
       } finally {
@@ -102,7 +126,103 @@ export default function CaseDocumentsPage({
     };
 
     fetchData();
-  }, [caseId, router]);
+  }, [caseId, router, connectionString, apiKey, fetchDocuments]);
+
+  const handleDownload = async (doc: Document) => {
+    if (!connectionString) return;
+
+    setDownloadingId(doc.id);
+    try {
+      const response = await fetch(
+        `/api/cases/${caseId}/documents/${doc.id}?connectionString=${encodeURIComponent(connectionString)}&action=download`,
+        {
+          headers: apiKey ? { 'x-casedev-api-key': apiKey } : {},
+        }
+      );
+
+      if (!response.ok) {
+        throw new Error('Failed to get download URL');
+      }
+
+      const data = await response.json();
+
+      if (data.downloadUrl) {
+        // Open download URL in new tab or trigger download
+        const link = document.createElement('a');
+        link.href = data.downloadUrl;
+        link.download = data.filename || doc.fileName;
+        link.target = '_blank';
+        document.body.appendChild(link);
+        link.click();
+        document.body.removeChild(link);
+      } else {
+        alert('No download URL available for this document');
+      }
+    } catch (err) {
+      console.error('Download error:', err);
+      alert('Failed to download document');
+    } finally {
+      setDownloadingId(null);
+    }
+  };
+
+  const handleView = async (doc: Document) => {
+    setViewingDocument(doc);
+    setDocumentText(null);
+    setLoadingText(true);
+
+    if (!connectionString) {
+      setLoadingText(false);
+      return;
+    }
+
+    try {
+      const response = await fetch(
+        `/api/cases/${caseId}/documents/${doc.id}?connectionString=${encodeURIComponent(connectionString)}&action=text`,
+        {
+          headers: apiKey ? { 'x-casedev-api-key': apiKey } : {},
+        }
+      );
+
+      if (response.ok) {
+        const data = await response.json();
+        setDocumentText(data.text);
+      }
+    } catch (err) {
+      console.error('Error fetching document text:', err);
+    } finally {
+      setLoadingText(false);
+    }
+  };
+
+  const handleDeleteClick = (doc: Document) => {
+    setDocumentToDelete(doc);
+    setDeleteModalOpen(true);
+  };
+
+  const handleDeleteConfirm = async () => {
+    if (!documentToDelete || !connectionString) return;
+
+    const response = await fetch(
+      `/api/cases/${caseId}/documents/${documentToDelete.id}?connectionString=${encodeURIComponent(connectionString)}&deleteFromVault=true`,
+      {
+        method: 'DELETE',
+        headers: apiKey ? { 'x-casedev-api-key': apiKey } : {},
+      }
+    );
+
+    if (!response.ok) {
+      throw new Error('Failed to delete document');
+    }
+
+    // Refresh documents list
+    await fetchDocuments();
+    setDocumentToDelete(null);
+  };
+
+  const handleDocumentUploaded = () => {
+    fetchDocuments();
+  };
 
   if (loading) {
     return (
@@ -158,19 +278,75 @@ export default function CaseDocumentsPage({
   const getDocumentsByType = (type: string) =>
     documents.filter((d) => d.documentType === type);
 
-  const handleDocumentUploaded = () => {
-    // Refresh documents list
-    const connectionString = localStorage.getItem("bankruptcy_db_connection");
-    if (connectionString && caseId) {
-      fetch(`/api/cases/${caseId}/documents?connectionString=${encodeURIComponent(connectionString)}`)
-        .then((res) => res.json())
-        .then((data) => setDocuments(data.documents || []))
-        .catch(console.error);
-    }
-  };
-
   return (
     <div className="container mx-auto p-6 max-w-7xl">
+      {/* Delete Confirmation Modal */}
+      <DeleteConfirmationModal
+        open={deleteModalOpen}
+        onOpenChange={setDeleteModalOpen}
+        title="Delete Document?"
+        description={`Are you sure you want to delete "${documentToDelete?.fileName}"? This action cannot be undone.`}
+        onConfirm={handleDeleteConfirm}
+      />
+
+      {/* Document Viewer Modal */}
+      {viewingDocument && (
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
+          <div className="bg-background rounded-lg shadow-xl max-w-4xl w-full max-h-[90vh] flex flex-col">
+            <div className="flex items-center justify-between p-4 border-b">
+              <div>
+                <h2 className="text-lg font-semibold">{viewingDocument.fileName}</h2>
+                <p className="text-sm text-muted-foreground capitalize">
+                  {viewingDocument.documentType?.replace(/_/g, " ") || "Document"}
+                </p>
+              </div>
+              <div className="flex items-center gap-2">
+                <button
+                  onClick={() => handleDownload(viewingDocument)}
+                  className="p-2 hover:bg-muted rounded-lg transition-colors"
+                  title="Download"
+                >
+                  <Download className="w-5 h-5" />
+                </button>
+                <button
+                  onClick={() => setViewingDocument(null)}
+                  className="p-2 hover:bg-muted rounded-lg transition-colors"
+                >
+                  <X className="w-5 h-5" />
+                </button>
+              </div>
+            </div>
+            <div className="flex-1 overflow-auto p-4">
+              {loadingText ? (
+                <div className="flex items-center justify-center py-12">
+                  <Loader2 className="w-8 h-8 animate-spin text-primary" />
+                </div>
+              ) : documentText ? (
+                <div className="prose prose-sm max-w-none">
+                  <pre className="whitespace-pre-wrap font-mono text-sm bg-muted p-4 rounded-lg">
+                    {documentText}
+                  </pre>
+                </div>
+              ) : (
+                <div className="text-center py-12 text-muted-foreground">
+                  <FileText className="w-12 h-12 mx-auto mb-4 opacity-50" />
+                  <p>No text content available for this document.</p>
+                  <p className="text-sm mt-2">
+                    The document may still be processing or OCR text is not available.
+                  </p>
+                  <button
+                    onClick={() => handleDownload(viewingDocument)}
+                    className="mt-4 px-4 py-2 bg-primary text-primary-foreground rounded-lg hover:bg-primary/90"
+                  >
+                    Download Original File
+                  </button>
+                </div>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* Header */}
       <div className="mb-8">
         <div className="flex items-center gap-2 text-sm text-muted-foreground mb-2">
@@ -317,18 +493,26 @@ export default function CaseDocumentsPage({
                       </span>
                       <div className="flex items-center gap-1">
                         <button
+                          onClick={() => handleView(doc)}
                           className="p-2 hover:bg-background rounded-lg transition-colors"
                           title="View"
                         >
                           <Eye className="w-4 h-4 text-muted-foreground" />
                         </button>
                         <button
-                          className="p-2 hover:bg-background rounded-lg transition-colors"
+                          onClick={() => handleDownload(doc)}
+                          disabled={downloadingId === doc.id}
+                          className="p-2 hover:bg-background rounded-lg transition-colors disabled:opacity-50"
                           title="Download"
                         >
-                          <Download className="w-4 h-4 text-muted-foreground" />
+                          {downloadingId === doc.id ? (
+                            <Loader2 className="w-4 h-4 animate-spin" />
+                          ) : (
+                            <Download className="w-4 h-4 text-muted-foreground" />
+                          )}
                         </button>
                         <button
+                          onClick={() => handleDeleteClick(doc)}
                           className="p-2 hover:bg-background rounded-lg transition-colors text-red-500"
                           title="Delete"
                         >
