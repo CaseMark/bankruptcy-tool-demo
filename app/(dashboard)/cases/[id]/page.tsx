@@ -8,11 +8,24 @@ import {
   DollarSign,
   Calculator,
   ChevronRight,
-  Loader2
+  Loader2,
+  ArrowLeft,
+  Trash2
 } from "lucide-react";
 import Link from "next/link";
 import { DocumentUpload } from "@/components/cases/document-upload";
 import { CaseStatusBadge } from "@/components/cases/case-status-badge";
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
+import { Button } from "@/components/ui/button";
 
 interface CaseData {
   id: string;
@@ -50,6 +63,35 @@ export default function CaseDetailPage() {
   const [documents, setDocuments] = useState<Document[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
+  const [deleting, setDeleting] = useState(false);
+
+  const handleDeleteCase = async () => {
+    const connectionString = localStorage.getItem('bankruptcy_db_connection');
+    if (!connectionString) {
+      setError('Database connection not found');
+      return;
+    }
+
+    setDeleting(true);
+    try {
+      const response = await fetch(
+        `/api/cases/${id}?connectionString=${encodeURIComponent(connectionString)}`,
+        { method: 'DELETE' }
+      );
+
+      if (!response.ok) {
+        const data = await response.json();
+        throw new Error(data.error || 'Failed to delete case');
+      }
+
+      router.push('/cases');
+    } catch (err) {
+      console.error('Error deleting case:', err);
+      setError(err instanceof Error ? err.message : 'Failed to delete case');
+      setDeleting(false);
+    }
+  };
 
   useEffect(() => {
     const apiKey = localStorage.getItem('casedev_api_key');
@@ -153,6 +195,26 @@ export default function CaseDetailPage() {
 
   return (
     <div className="container mx-auto p-6 max-w-7xl">
+      {/* Back Button and Actions */}
+      <div className="flex items-center justify-between mb-6">
+        <Button
+          variant="outline"
+          onClick={() => router.push('/cases')}
+          className="flex items-center gap-2"
+        >
+          <ArrowLeft className="w-4 h-4" />
+          Back to Cases
+        </Button>
+        <Button
+          variant="destructive"
+          onClick={() => setDeleteDialogOpen(true)}
+          className="flex items-center gap-2"
+        >
+          <Trash2 className="w-4 h-4" />
+          Delete Case
+        </Button>
+      </div>
+
       {/* Header */}
       <div className="mb-8">
         <div className="flex items-center gap-2 text-sm text-muted-foreground mb-2">
@@ -175,6 +237,36 @@ export default function CaseDetailPage() {
           <CaseStatusBadge status={caseData.status} />
         </div>
       </div>
+
+      {/* Delete Confirmation Dialog */}
+      <AlertDialog open={deleteDialogOpen} onOpenChange={setDeleteDialogOpen}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Delete Case</AlertDialogTitle>
+            <AlertDialogDescription>
+              Are you sure you want to delete the case for <strong>{caseData.clientName}</strong>? 
+              This action cannot be undone and will permanently remove all case data, documents, and forms.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel disabled={deleting}>Cancel</AlertDialogCancel>
+            <AlertDialogAction
+              onClick={handleDeleteCase}
+              disabled={deleting}
+              className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+            >
+              {deleting ? (
+                <>
+                  <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+                  Deleting...
+                </>
+              ) : (
+                'Delete Case'
+              )}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
 
       {/* Case Information Card */}
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 mb-8">
