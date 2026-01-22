@@ -18,8 +18,10 @@ import {
   Loader2,
   Info,
   X,
+  ArrowLeft,
 } from "lucide-react";
 import Link from "next/link";
+import { Button } from "@/components/ui/button";
 import JSZip from "jszip";
 import { saveAs } from "file-saver";
 
@@ -426,11 +428,16 @@ export default function CaseFormsPage({
           <span>Forms</span>
         </div>
         <div className="flex items-center justify-between">
-          <div>
-            <h1 className="text-3xl font-bold tracking-tight">Bankruptcy Forms</h1>
-            <p className="text-muted-foreground mt-1">
-              {isChapter7 ? "Chapter 7" : "Chapter 13"} Official Bankruptcy Forms
-            </p>
+          <div className="flex items-center gap-4">
+            <Button variant="outline" size="icon" onClick={() => router.push(`/cases/${id}`)}>
+              <ArrowLeft className="h-4 w-4" />
+            </Button>
+            <div>
+              <h1 className="text-3xl font-bold tracking-tight">Bankruptcy Forms</h1>
+              <p className="text-muted-foreground mt-1">
+                {isChapter7 ? "Chapter 7" : "Chapter 13"} Official Bankruptcy Forms
+              </p>
+            </div>
           </div>
           <div className="flex items-center gap-3">
             <button

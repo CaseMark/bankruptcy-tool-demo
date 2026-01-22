@@ -19,8 +19,10 @@ import {
   CheckCircle,
   Loader2,
   FileText,
+  ArrowLeft,
 } from "lucide-react";
 import Link from "next/link";
+import { Button } from "@/components/ui/button";
 import { AddIncomeModal } from "@/components/cases/financial/add-income-modal";
 import { AddDebtModal } from "@/components/cases/financial/add-debt-modal";
 import { AddAssetModal } from "@/components/cases/financial/add-asset-modal";
@@ -377,11 +379,16 @@ export default function CaseFinancialPage() {
           <span>Financial Data</span>
         </div>
         <div className="flex items-center justify-between">
-          <div>
-            <h1 className="text-3xl font-bold tracking-tight">Financial Data</h1>
-            <p className="text-muted-foreground mt-1">
-              Income, expenses, assets, and debts overview
-            </p>
+          <div className="flex items-center gap-4">
+            <Button variant="outline" size="icon" onClick={() => router.push(`/cases/${id}`)}>
+              <ArrowLeft className="h-4 w-4" />
+            </Button>
+            <div>
+              <h1 className="text-3xl font-bold tracking-tight">Financial Data</h1>
+              <p className="text-muted-foreground mt-1">
+                Income, expenses, assets, and debts overview
+              </p>
+            </div>
           </div>
         </div>
       </div>

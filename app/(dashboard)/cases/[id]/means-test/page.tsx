@@ -13,6 +13,7 @@ import {
   Users,
   MapPin,
   ArrowRight,
+  ArrowLeft,
   RefreshCw,
   Download,
   HelpCircle,
@@ -20,6 +21,7 @@ import {
   AlertCircle,
 } from "lucide-react";
 import Link from "next/link";
+import { Button } from "@/components/ui/button";
 
 interface BankruptcyCase {
   id: string;
@@ -204,11 +206,16 @@ export default function CaseMeansTestPage() {
           <span>Means Test</span>
         </div>
         <div className="flex items-center justify-between">
-          <div>
-            <h1 className="text-3xl font-bold tracking-tight">Means Test Calculator</h1>
-            <p className="text-muted-foreground mt-1">
-              Chapter 7 bankruptcy eligibility determination
-            </p>
+          <div className="flex items-center gap-4">
+            <Button variant="outline" size="icon" onClick={() => router.push(`/cases/${id}`)}>
+              <ArrowLeft className="h-4 w-4" />
+            </Button>
+            <div>
+              <h1 className="text-3xl font-bold tracking-tight">Means Test Calculator</h1>
+              <p className="text-muted-foreground mt-1">
+                Chapter 7 bankruptcy eligibility determination
+              </p>
+            </div>
           </div>
           <div className="flex items-center gap-3">
             <button
