@@ -79,7 +79,7 @@ export async function POST(
       .reduce((sum, d) => sum + Number(d.balance), 0);
 
     // Get state median income (simplified)
-    const { getStateMedianIncome } = await import('@/lib/bankruptcy/irs-standards');
+    const { getStateMedianIncome } = await import('@/lib/bankruptcy/chapter7');
     const state = caseData.state || 'CA';
     const householdSize = caseData.household_size || 1;
     const medianIncome = getStateMedianIncome(state, householdSize);

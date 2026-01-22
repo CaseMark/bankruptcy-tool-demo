@@ -4,9 +4,9 @@ import {
   calculateMeansTest,
   calculateIRSAllowances,
   getStateMedianIncome,
-  MeansTestResult,
-  MeansTestAllowances,
-} from '@/lib/bankruptcy/irs-standards';
+  type MeansTestResult,
+  type MeansTestAllowances,
+} from '@/lib/bankruptcy/chapter7';
 
 interface MeansTestResponse {
   caseId: string;
