@@ -20,8 +20,30 @@ export {
 export {
   NATIONAL_STANDARDS,
   HEALTH_CARE_STANDARDS,
-  LOCAL_HOUSING_STANDARDS,
   TRANSPORTATION_STANDARDS,
   STATE_MEDIAN_INCOME,
   CHAPTER_7_LIMITS,
 } from './standards';
+
+// Re-export county-level housing standards
+export {
+  COUNTY_HOUSING_STANDARDS,
+  getCountyHousingStandard,
+  hasCountyData,
+  getCountiesForState,
+} from './county-housing-standards';
+
+// Re-export regional transportation standards
+export {
+  VEHICLE_OWNERSHIP,
+  PUBLIC_TRANSPORTATION,
+  REGIONAL_BASELINE,
+  METRO_AREAS,
+  STATE_TO_REGION,
+  calculateTransportationAllowance,
+  getOperatingCosts,
+  getOwnershipCosts,
+  isInMetroArea,
+  getMetroAreaForCounty,
+  type TransportationAllowance,
+} from './transportation-standards';

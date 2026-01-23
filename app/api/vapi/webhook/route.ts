@@ -12,6 +12,8 @@ import postgres from 'postgres';
  * - verify_client: Verify client identity with name + SSN
  * - create_new_case: Create a new bankruptcy case
  * - update_case_intake: Update an existing case with intake data
+ * - get_case_documents: Get list of documents uploaded to a case
+ * - get_required_documents: Get required documents and their upload status
  */
 
 interface VapiFunctionCall {
@@ -78,6 +80,12 @@ export async function POST(request: NextRequest) {
           break;
         case 'update_case_intake':
           result = await updateCaseIntake(sql, parameters);
+          break;
+        case 'get_case_documents':
+          result = await getCaseDocuments(sql, parameters);
+          break;
+        case 'get_required_documents':
+          result = await getRequiredDocuments(sql, parameters);
           break;
         default:
           result = { success: false, error: `Unknown function: ${name}` };
@@ -295,6 +303,19 @@ async function updateCaseIntake(
     };
   }
 
+  // CRITICAL: Verify case exists before attempting update
+  // This function should NEVER create a new case
+  const existingCase = await sql`
+    SELECT id FROM bankruptcy_cases WHERE id = ${caseId}
+  `;
+
+  if (existingCase.length === 0) {
+    return {
+      success: false,
+      message: 'Case not found. Cannot update non-existent case. Please contact support.',
+    };
+  }
+
   // Build dynamic update based on provided fields
   const updates: Record<string, unknown> = {};
 
@@ -341,4 +362,174 @@ async function updateCaseIntake(
     success: true,
     message: `Updated ${fieldsUpdated} field(s) on your case. Is there anything else you'd like to add or update?`,
   };
+}
+
+/**
+ * Get documents uploaded to a case
+ */
+async function getCaseDocuments(
+  sql: postgres.Sql,
+  params: Record<string, unknown>
+): Promise<{
+  success: boolean;
+  documents?: Array<{ fileName: string; documentType: string; status: string }>;
+  message: string;
+}> {
+  const caseId = params.case_id as string;
+
+  if (!caseId) {
+    return {
+      success: false,
+      message: 'Case ID is required. Please verify your identity first.',
+    };
+  }
+
+  // Check if case_documents table exists
+  const tableExists = await sql`
+    SELECT EXISTS (
+      SELECT FROM information_schema.tables
+      WHERE table_name = 'case_documents'
+    )
+  `;
+
+  if (!tableExists[0].exists) {
+    return {
+      success: true,
+      documents: [],
+      message: 'No documents have been uploaded to your case yet.',
+    };
+  }
+
+  const documents = await sql`
+    SELECT file_name, document_type, validation_status, uploaded_at
+    FROM case_documents
+    WHERE case_id = ${caseId}
+    ORDER BY uploaded_at DESC
+  `;
+
+  if (documents.length === 0) {
+    return {
+      success: true,
+      documents: [],
+      message: 'No documents have been uploaded to your case yet. You can upload documents through the case dashboard.',
+    };
+  }
+
+  const docList = documents.map((d: any) => ({
+    fileName: d.file_name,
+    documentType: formatDocType(d.document_type),
+    status: d.validation_status === 'valid' ? 'Validated' :
+            d.validation_status === 'pending' ? 'Processing' : 'Needs Review',
+  }));
+
+  const summary = docList.map(d => `${d.fileName} (${d.documentType}) - ${d.status}`).join(', ');
+
+  return {
+    success: true,
+    documents: docList,
+    message: `You have ${documents.length} document(s) uploaded: ${summary}`,
+  };
+}
+
+/**
+ * Get list of required documents and their upload status
+ */
+async function getRequiredDocuments(
+  sql: postgres.Sql,
+  params: Record<string, unknown>
+): Promise<{
+  success: boolean;
+  required: string[];
+  optional: string[];
+  uploaded: string[];
+  message: string;
+}> {
+  const caseId = params.case_id as string;
+
+  if (!caseId) {
+    return {
+      success: false,
+      required: [],
+      optional: [],
+      uploaded: [],
+      message: 'Case ID is required. Please verify your identity first.',
+    };
+  }
+
+  // Required documents for Chapter 7
+  const requiredDocs = [
+    { type: 'tax_return', label: 'Tax Returns (Last 2 Years)', required: true },
+    { type: 'paystub', label: 'Pay Stubs (Last 6 Months)', required: true },
+    { type: 'bank_statement', label: 'Bank Statements (Last 6 Months)', required: true },
+    { type: 'mortgage', label: 'Mortgage Statement or Lease', required: true },
+    { type: 'credit_card', label: 'Credit Card Statements', required: true },
+    { type: 'vehicle_title', label: 'Vehicle Titles & Loan Statements', required: false },
+    { type: 'medical_bill', label: 'Medical Bills', required: false },
+    { type: 'utility', label: 'Utility Bills', required: false },
+  ];
+
+  // Check what's been uploaded
+  let uploadedTypes: string[] = [];
+  const tableExists = await sql`
+    SELECT EXISTS (
+      SELECT FROM information_schema.tables
+      WHERE table_name = 'case_documents'
+    )
+  `;
+
+  if (tableExists[0].exists) {
+    const docs = await sql`
+      SELECT DISTINCT document_type FROM case_documents WHERE case_id = ${caseId}
+    `;
+    uploadedTypes = docs.map((d: any) => d.document_type);
+  }
+
+  const missingRequired = requiredDocs
+    .filter(d => d.required && !uploadedTypes.includes(d.type))
+    .map(d => d.label);
+
+  const missingOptional = requiredDocs
+    .filter(d => !d.required && !uploadedTypes.includes(d.type))
+    .map(d => d.label);
+
+  const completed = requiredDocs
+    .filter(d => uploadedTypes.includes(d.type))
+    .map(d => d.label);
+
+  let message = '';
+  if (missingRequired.length > 0) {
+    message = `You still need to upload: ${missingRequired.join(', ')}.`;
+  } else {
+    message = 'All required documents have been uploaded.';
+  }
+
+  if (completed.length > 0) {
+    message += ` You've completed: ${completed.join(', ')}.`;
+  }
+
+  return {
+    success: true,
+    required: missingRequired,
+    optional: missingOptional,
+    uploaded: completed,
+    message,
+  };
+}
+
+// Helper to format document type for display
+function formatDocType(type: string | null): string {
+  if (!type) return 'Unknown';
+  const typeMap: Record<string, string> = {
+    tax_return: 'Tax Return',
+    paystub: 'Pay Stub',
+    bank_statement: 'Bank Statement',
+    mortgage: 'Mortgage/Lease',
+    credit_card: 'Credit Card Statement',
+    vehicle_title: 'Vehicle Title',
+    medical_bill: 'Medical Bill',
+    utility: 'Utility Bill',
+    w2: 'W-2 Form',
+    '1099': '1099 Form',
+  };
+  return typeMap[type] || type.replace(/_/g, ' ');
 }

@@ -338,12 +338,15 @@ export class CaseDevClient {
 
   /**
    * Call LLM with CaseMark Core 1 model
+   *
+   * Note: The case.dev API does not support OpenAI's `response_format` parameter.
+   * To get JSON output, include explicit instructions in your prompt.
    */
   async completeLLM(params: {
     model: string;
     messages: Array<{ role: string; content: string }>;
     temperature?: number;
-    response_format?: { type: string };
+    max_tokens?: number;
   }): Promise<LLMChatCompletionResponse> {
     return this.request<LLMChatCompletionResponse>('/llm/v1/chat/completions', {
       method: 'POST',
@@ -353,12 +356,15 @@ export class CaseDevClient {
 
   /**
    * Call LLM (alias for completeLLM)
+   *
+   * Note: The case.dev API does not support OpenAI's `response_format` parameter.
+   * To get JSON output, include explicit instructions in your prompt.
    */
   async llmComplete(params: {
     model: string;
     messages: Array<{ role: string; content: string }>;
     temperature?: number;
-    response_format?: { type: string };
+    max_tokens?: number;
   }): Promise<LLMChatCompletionResponse> {
     return this.completeLLM(params);
   }

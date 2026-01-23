@@ -28,41 +28,54 @@ interface AddIncomeModalProps {
   onSuccess: () => void;
 }
 
-const PAY_PERIODS = [
-  { value: 'weekly', label: 'Weekly' },
-  { value: 'biweekly', label: 'Bi-Weekly' },
-  { value: 'monthly', label: 'Monthly' },
-  { value: 'annual', label: 'Annual' },
+// Income sources per Form B 122A-2
+const INCOME_SOURCES = [
+  { value: 'employment', label: 'Employment (wages, salary, tips, bonuses)' },
+  { value: 'self_employment', label: 'Self-Employment / Business' },
+  { value: 'rental', label: 'Rental / Real Property Income' },
+  { value: 'interest', label: 'Interest / Dividends / Royalties' },
+  { value: 'pension', label: 'Pension / Retirement Income' },
+  { value: 'government', label: 'Government Benefits (disability, unemployment)' },
+  { value: 'spouse', label: 'Spouse Income (if not filing jointly)' },
+  { value: 'alimony', label: 'Alimony / Maintenance' },
+  { value: 'contributions', label: 'Regular Contributions (family support)' },
+  { value: 'other', label: 'Other Income' },
 ];
 
-const INCOME_SOURCES = [
-  { value: 'employment', label: 'Employment' },
-  { value: 'business', label: 'Self-Employment/Business' },
-  { value: 'rental', label: 'Rental Income' },
-  { value: 'government', label: 'Government Benefits' },
-  { value: 'other', label: 'Other' },
-];
+// Generate month options for the last 12 months
+function getMonthOptions() {
+  const options = [];
+  const today = new Date();
+  for (let i = 0; i < 12; i++) {
+    const date = new Date(today.getFullYear(), today.getMonth() - i, 1);
+    const value = date.toISOString().slice(0, 7); // YYYY-MM
+    const label = date.toLocaleDateString('en-US', { month: 'long', year: 'numeric' });
+    options.push({ value, label });
+  }
+  return options;
+}
 
 export function AddIncomeModal({ open, onOpenChange, caseId, onSuccess }: AddIncomeModalProps) {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [formData, setFormData] = useState({
+    incomeMonth: '',
     employer: '',
-    occupation: '',
-    grossPay: '',
-    netPay: '',
-    payPeriod: '',
-    incomeSource: '',
-    ytdGross: '',
+    grossAmount: '',
+    netAmount: '',
+    incomeSource: 'employment',
+    description: '',
   });
+
+  const monthOptions = getMonthOptions();
 
   const getIncomeSourceLabel = (value: string) => {
     const found = INCOME_SOURCES.find(source => source.value === value);
     return found ? found.label : 'Choose One...';
   };
 
-  const getPayPeriodLabel = (value: string) => {
-    const found = PAY_PERIODS.find(period => period.value === value);
+  const getMonthLabel = (value: string) => {
+    const found = monthOptions.find(m => m.value === value);
     return found ? found.label : 'Choose One...';
   };
 
@@ -72,26 +85,14 @@ export function AddIncomeModal({ open, onOpenChange, caseId, onSuccess }: AddInc
     setError(null);
 
     // Validate required fields
-    if (!formData.incomeSource) {
-      setError('Please select an income source.');
+    if (!formData.incomeMonth) {
+      setError('Please select the income month.');
       setLoading(false);
       return;
     }
 
-    if (!formData.payPeriod) {
-      setError('Please select a pay period.');
-      setLoading(false);
-      return;
-    }
-
-    if (!formData.employer) {
-      setError('Please enter an employer or source name.');
-      setLoading(false);
-      return;
-    }
-
-    if (!formData.grossPay) {
-      setError('Please enter a gross pay amount.');
+    if (!formData.grossAmount || parseFloat(formData.grossAmount) <= 0) {
+      setError('Please enter a valid gross amount.');
       setLoading(false);
       return;
     }
@@ -110,7 +111,14 @@ export function AddIncomeModal({ open, onOpenChange, caseId, onSuccess }: AddInc
         {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify(formData),
+          body: JSON.stringify({
+            incomeMonth: formData.incomeMonth,
+            employer: formData.employer || null,
+            grossAmount: parseFloat(formData.grossAmount),
+            netAmount: formData.netAmount ? parseFloat(formData.netAmount) : null,
+            incomeSource: formData.incomeSource,
+            description: formData.description || null,
+          }),
         }
       );
 
@@ -121,13 +129,12 @@ export function AddIncomeModal({ open, onOpenChange, caseId, onSuccess }: AddInc
 
       // Reset form and close
       setFormData({
+        incomeMonth: '',
         employer: '',
-        occupation: '',
-        grossPay: '',
-        netPay: '',
-        payPeriod: '',
-        incomeSource: '',
-        ytdGross: '',
+        grossAmount: '',
+        netAmount: '',
+        incomeSource: 'employment',
+        description: '',
       });
       onSuccess();
       onOpenChange(false);
@@ -142,9 +149,9 @@ export function AddIncomeModal({ open, onOpenChange, caseId, onSuccess }: AddInc
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className="sm:max-w-[500px]">
         <DialogHeader>
-          <DialogTitle className="text-xl font-semibold">Add Income Source</DialogTitle>
+          <DialogTitle className="text-xl font-semibold">Add Income Record</DialogTitle>
           <DialogDescription>
-            Enter income details for the bankruptcy case.
+            Enter income received during a specific month for the 6-month CMI calculation.
           </DialogDescription>
         </DialogHeader>
 
@@ -157,18 +164,38 @@ export function AddIncomeModal({ open, onOpenChange, caseId, onSuccess }: AddInc
 
           <div className="grid grid-cols-2 gap-4">
             <div className="space-y-2">
+              <Label htmlFor="incomeMonth">Income Month *</Label>
+              <Select
+                value={formData.incomeMonth}
+                onValueChange={(value) => setFormData(prev => ({ ...prev, incomeMonth: value || '' }))}
+              >
+                <SelectTrigger>
+                  <SelectValue>
+                    {formData.incomeMonth ? getMonthLabel(formData.incomeMonth) : 'Choose Month...'}
+                  </SelectValue>
+                </SelectTrigger>
+                <SelectContent className="min-w-[200px]">
+                  {monthOptions.map((month) => (
+                    <SelectItem key={month.value} value={month.value}>
+                      {month.label}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+
+            <div className="space-y-2">
               <Label htmlFor="incomeSource">Income Source</Label>
               <Select
                 value={formData.incomeSource}
-                onValueChange={(value) => setFormData(prev => ({ ...prev, incomeSource: value || prev.incomeSource }))}
+                onValueChange={(value) => setFormData(prev => ({ ...prev, incomeSource: value || 'employment' }))}
               >
                 <SelectTrigger>
                   <SelectValue>
                     {formData.incomeSource ? getIncomeSourceLabel(formData.incomeSource) : 'Choose One...'}
                   </SelectValue>
                 </SelectTrigger>
-                <SelectContent className="min-w-[240px]">
-                  <SelectItem value="" disabled>Choose One...</SelectItem>
+                <SelectContent className="min-w-[280px]">
                   {INCOME_SOURCES.map((source) => (
                     <SelectItem key={source.value} value={source.value}>
                       {source.label}
@@ -177,85 +204,55 @@ export function AddIncomeModal({ open, onOpenChange, caseId, onSuccess }: AddInc
                 </SelectContent>
               </Select>
             </div>
-
-            <div className="space-y-2">
-              <Label htmlFor="payPeriod">Pay Period</Label>
-              <Select
-                value={formData.payPeriod}
-                onValueChange={(value) => setFormData(prev => ({ ...prev, payPeriod: value || prev.payPeriod }))}
-              >
-                <SelectTrigger>
-                  <SelectValue>
-                    {formData.payPeriod ? getPayPeriodLabel(formData.payPeriod) : 'Choose One...'}
-                  </SelectValue>
-                </SelectTrigger>
-                <SelectContent className="min-w-[160px]">
-                  <SelectItem value="" disabled>Choose One...</SelectItem>
-                  {PAY_PERIODS.map((period) => (
-                    <SelectItem key={period.value} value={period.value}>
-                      {period.label}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-            </div>
           </div>
 
           <div className="space-y-2">
-            <Label htmlFor="employer">Employer / Source Name</Label>
+            <Label htmlFor="employer">Employer / Payer Name</Label>
             <Input
               id="employer"
               value={formData.employer}
               onChange={(e) => setFormData(prev => ({ ...prev, employer: e.target.value }))}
-              placeholder="e.g., ABC Company"
-            />
-          </div>
-
-          <div className="space-y-2">
-            <Label htmlFor="occupation">Occupation / Description</Label>
-            <Input
-              id="occupation"
-              value={formData.occupation}
-              onChange={(e) => setFormData(prev => ({ ...prev, occupation: e.target.value }))}
-              placeholder="e.g., Software Engineer"
+              placeholder="e.g., ABC Company, Social Security Admin"
             />
           </div>
 
           <div className="grid grid-cols-2 gap-4">
             <div className="space-y-2">
-              <Label htmlFor="grossPay">Gross Pay ($)</Label>
+              <Label htmlFor="grossAmount">Gross Amount ($) *</Label>
               <Input
-                id="grossPay"
+                id="grossAmount"
                 type="number"
                 step="0.01"
-                value={formData.grossPay}
-                onChange={(e) => setFormData(prev => ({ ...prev, grossPay: e.target.value }))}
+                min="0"
+                value={formData.grossAmount}
+                onChange={(e) => setFormData(prev => ({ ...prev, grossAmount: e.target.value }))}
                 placeholder="0.00"
               />
+              <p className="text-xs text-muted-foreground">Total income received this month before taxes</p>
             </div>
 
             <div className="space-y-2">
-              <Label htmlFor="netPay">Net Pay ($)</Label>
+              <Label htmlFor="netAmount">Net Amount ($)</Label>
               <Input
-                id="netPay"
+                id="netAmount"
                 type="number"
                 step="0.01"
-                value={formData.netPay}
-                onChange={(e) => setFormData(prev => ({ ...prev, netPay: e.target.value }))}
+                min="0"
+                value={formData.netAmount}
+                onChange={(e) => setFormData(prev => ({ ...prev, netAmount: e.target.value }))}
                 placeholder="0.00"
               />
+              <p className="text-xs text-muted-foreground">Take-home pay after deductions</p>
             </div>
           </div>
 
           <div className="space-y-2">
-            <Label htmlFor="ytdGross">Year-to-Date Gross ($)</Label>
+            <Label htmlFor="description">Description (optional)</Label>
             <Input
-              id="ytdGross"
-              type="number"
-              step="0.01"
-              value={formData.ytdGross}
-              onChange={(e) => setFormData(prev => ({ ...prev, ytdGross: e.target.value }))}
-              placeholder="0.00"
+              id="description"
+              value={formData.description}
+              onChange={(e) => setFormData(prev => ({ ...prev, description: e.target.value }))}
+              placeholder="e.g., Regular bi-weekly paycheck, Quarterly dividend"
             />
           </div>
 

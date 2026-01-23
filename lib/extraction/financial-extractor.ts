@@ -5,6 +5,43 @@
 
 import { CaseDevClient } from '@/lib/case-dev/client';
 
+/**
+ * Monthly income record for 6-month CMI calculation per Form B 122A-2
+ * Each record represents income received in a specific calendar month
+ */
+export interface ExtractedMonthlyIncome {
+  incomeMonth: string; // YYYY-MM format (the month income was RECEIVED)
+  grossAmount: number; // Gross income received that month
+  netAmount: number | null; // Net income if available
+  employer: string | null; // Employer/payer name
+  incomeSource:
+    | 'employment'      // Line 2: Wages, salary, tips, bonuses, overtime, commissions
+    | 'self_employment' // Line 3: Net business/profession/farm income
+    | 'rental'          // Line 4: Rent and real property income
+    | 'interest'        // Line 5: Interest, dividends, royalties
+    | 'pension'         // Line 6: Pension and retirement income
+    | 'government'      // Line 7: State disability, unemployment, etc.
+    | 'spouse'          // Line 8: Income from spouse (if not filing jointly)
+    | 'alimony'         // Line 9: Alimony/maintenance received
+    | 'contributions'   // Line 10: Regular contributions from others
+    | 'other';          // Line 11: Other income
+  description: string; // e.g., "Bi-weekly paycheck", "Monthly rental income"
+  confidence: number; // 0-1 extraction confidence
+}
+
+/**
+ * Result of income extraction from a document
+ * Contains monthly breakdown for 6-month CMI calculation
+ */
+export interface IncomeExtractionResult {
+  documentId: string;
+  documentType: string;
+  monthlyIncomes: ExtractedMonthlyIncome[];
+  totalConfidence: number;
+  warnings: string[]; // e.g., "Could not determine exact pay period dates"
+}
+
+// Legacy interface for backward compatibility
 export interface ExtractedIncome {
   employerName: string;
   employerEIN: string | null;
@@ -30,12 +67,14 @@ export interface ExtractedIncome {
 export interface ExtractedDebt {
   creditorName: string;
   accountNumber: string | null;
+  accountLast4: string | null; // Last 4 digits for matching across statements
   debtType: 'credit-card' | 'medical' | 'personal-loan' | 'auto-loan' | 'mortgage' | 'student-loan' | 'tax-debt' | 'other';
   originalAmount: number | null;
   currentBalance: number;
   monthlyPayment: number | null;
   isSecured: boolean;
   collateralDescription: string | null;
+  statementDate: string | null; // YYYY-MM-DD for determining most recent
   source: string;
   confidence: number;
 }
@@ -47,6 +86,9 @@ export interface ExtractedAsset {
   ownershipPercentage: number;
   isExempt: boolean | null;
   encumbrances: number;
+  accountLast4: string | null; // Last 4 digits for bank accounts - used to match across statements
+  institutionName: string | null; // Bank name for matching
+  statementDate: string | null; // YYYY-MM-DD for determining most recent
   source: string;
   confidence: number;
 }
@@ -87,7 +129,13 @@ export class FinancialDataExtractor {
       ],
     });
 
-    const content = response.choices[0].message.content;
+    // Safely extract content from response
+    const content = response?.choices?.[0]?.message?.content;
+    if (!content) {
+      console.warn('LLM income extraction returned unexpected response:', JSON.stringify(response));
+      return [];
+    }
+
     const jsonMatch = content.match(/\{[\s\S]*\}/);
 
     if (!jsonMatch) {
@@ -96,6 +144,271 @@ export class FinancialDataExtractor {
 
     const extracted = JSON.parse(jsonMatch[0]);
     return this.normalizeIncomeData(extracted);
+  }
+
+  /**
+   * Extract monthly income for 6-month CMI calculation per Form B 122A-2
+   *
+   * This method extracts income with specific calendar months for the means test.
+   * Per 11 U.S.C. § 101(10A), "current monthly income" is the average monthly income
+   * received during the 6 calendar months before filing.
+   *
+   * @param ocrText - OCR text from the document
+   * @param documentType - Type of document (paystub, w2, tax_return, 1099, etc.)
+   * @param documentId - ID of the source document
+   * @returns Income extraction result with monthly breakdown
+   */
+  async extractMonthlyIncome(
+    ocrText: string,
+    documentType: string,
+    documentId: string
+  ): Promise<IncomeExtractionResult> {
+    const prompt = this.buildMonthlyIncomePrompt(documentType);
+
+    const response = await this.client.llmComplete({
+      model: 'gpt-4o-mini',
+      messages: [
+        {
+          role: 'system',
+          content: prompt,
+        },
+        {
+          role: 'user',
+          content: `Extract monthly income information from this ${documentType} document:\n\n${ocrText}`,
+        },
+      ],
+    });
+
+    // Safely extract content from response
+    const content = response?.choices?.[0]?.message?.content;
+    if (!content) {
+      console.warn('LLM monthly income extraction returned unexpected response:', JSON.stringify(response));
+      return {
+        documentId,
+        documentType,
+        monthlyIncomes: [],
+        totalConfidence: 0,
+        warnings: ['LLM returned unexpected response format'],
+      };
+    }
+
+    const jsonMatch = content.match(/\{[\s\S]*\}/);
+
+    if (!jsonMatch) {
+      return {
+        documentId,
+        documentType,
+        monthlyIncomes: [],
+        totalConfidence: 0,
+        warnings: ['Failed to extract structured income data from document'],
+      };
+    }
+
+    try {
+      const extracted = JSON.parse(jsonMatch[0]);
+      return this.normalizeMonthlyIncomeData(extracted, documentId, documentType);
+    } catch (e) {
+      return {
+        documentId,
+        documentType,
+        monthlyIncomes: [],
+        totalConfidence: 0,
+        warnings: ['Failed to parse extracted income data'],
+      };
+    }
+  }
+
+  /**
+   * Build prompt for monthly income extraction
+   */
+  private buildMonthlyIncomePrompt(documentType: string): string {
+    const today = new Date();
+    const currentMonth = today.toISOString().slice(0, 7); // YYYY-MM
+    const currentYear = today.getFullYear();
+    const lastYear = currentYear - 1;
+
+    const typeSpecificInstructions: Record<string, string> = {
+      paystub: `This is a PAYSTUB. Extract:
+- Pay period dates and/or check date
+- Gross pay (total earnings before deductions)
+- Net pay (take-home after deductions)
+- Employer name
+- YTD (year-to-date) amounts if shown
+
+Create ONE income record per pay period shown on the stub.
+Use the check date or pay period end date to determine incomeMonth.`,
+
+      w2: `This is a W-2 FORM. Extract:
+- Box 1: Wages, tips, other compensation (this is the annual gross)
+- Employer name (Box c)
+- Tax year from the form
+
+IMPORTANT: For W-2s, create a SINGLE income record with:
+- incomeMonth: Use the LAST month of the tax year (e.g., "${lastYear}-12" for a ${lastYear} W-2)
+- grossAmount: The ANNUAL amount from Box 1 (do NOT divide by 12)
+- description: "Annual W-2 wages for [year]"
+- employer: The employer name from the W-2
+
+This allows the system to properly calculate monthly averages.`,
+
+      tax_return: `This is a TAX RETURN. Extract:
+- Total income or Adjusted Gross Income (AGI)
+- Tax year from the form
+- Specific income types if visible (wages, self-employment, interest, etc.)
+
+IMPORTANT: For tax returns, create a SINGLE income record with:
+- incomeMonth: Use the LAST month of the tax year (e.g., "${lastYear}-12" for a ${lastYear} return)
+- grossAmount: The ANNUAL total income or AGI (do NOT divide by 12)
+- incomeSource: Based on primary income type shown
+- description: "Annual tax return income for [year]"
+
+This allows the system to properly calculate monthly averages.`,
+
+      '1099': `This is a 1099 FORM. Extract:
+- Total income amount from the relevant box
+- Payer name
+- Tax year
+- Type of 1099 (MISC, INT, DIV, NEC, etc.)
+
+Create a SINGLE income record with:
+- incomeMonth: Use the LAST month of the tax year
+- grossAmount: The total amount (do NOT divide by 12)
+- incomeSource: Based on 1099 type (interest, self_employment, other)
+- description: "1099 income from [payer] for [year]"`,
+    };
+
+    const specificInstructions = typeSpecificInstructions[documentType] ||
+      `This is a ${documentType} document. Extract all income information you can find.`;
+
+    return `You are a bankruptcy paralegal assistant extracting income data for Chapter 7 means test.
+
+${specificInstructions}
+
+Current date: ${currentMonth}
+
+Return a JSON object with this EXACT structure:
+{
+  "monthlyIncomes": [
+    {
+      "incomeMonth": "YYYY-MM",
+      "grossAmount": <number>,
+      "netAmount": <number or null>,
+      "employer": "<string or null>",
+      "incomeSource": "employment" | "self_employment" | "rental" | "interest" | "pension" | "government" | "alimony" | "contributions" | "other",
+      "description": "<brief description of income>",
+      "confidence": <0-1 score>
+    }
+  ],
+  "warnings": ["<any issues or uncertainties>"]
+}
+
+Income source mapping:
+- employment: wages, salary, tips, bonuses (W-2 income)
+- self_employment: business income, 1099-NEC, Schedule C
+- rental: rental property income
+- interest: 1099-INT, bank interest, dividends
+- pension: retirement distributions
+- government: unemployment, disability
+- alimony: alimony received
+- contributions: family support
+- other: any other income
+
+IMPORTANT:
+- Use YYYY-MM format for incomeMonth
+- For annual documents (W-2, tax returns, 1099s), use the full annual amount - do NOT divide
+- Set confidence to 0.9+ when amounts are clearly visible
+- Return ONLY the JSON object`;
+  }
+
+  /**
+   * Normalize and validate extracted monthly income data
+   */
+  private normalizeMonthlyIncomeData(
+    extracted: any,
+    documentId: string,
+    documentType: string
+  ): IncomeExtractionResult {
+    const warnings: string[] = extracted.warnings || [];
+
+    if (!extracted.monthlyIncomes || !Array.isArray(extracted.monthlyIncomes)) {
+      return {
+        documentId,
+        documentType,
+        monthlyIncomes: [],
+        totalConfidence: 0,
+        warnings: [...warnings, 'No monthly income data found in extraction'],
+      };
+    }
+
+    const monthlyIncomes: ExtractedMonthlyIncome[] = extracted.monthlyIncomes
+      .filter((income: any) => income.incomeMonth && income.grossAmount)
+      .map((income: any) => ({
+        incomeMonth: this.normalizeMonth(income.incomeMonth),
+        grossAmount: Math.round(parseFloat(income.grossAmount) * 100) / 100,
+        netAmount: income.netAmount ? Math.round(parseFloat(income.netAmount) * 100) / 100 : null,
+        employer: income.employer || null,
+        incomeSource: this.normalizeIncomeSource(income.incomeSource),
+        description: income.description || `Income from ${documentType}`,
+        confidence: Math.min(1, Math.max(0, parseFloat(income.confidence) || 0.7)),
+      }));
+
+    // Calculate average confidence
+    const totalConfidence = monthlyIncomes.length > 0
+      ? monthlyIncomes.reduce((sum, inc) => sum + inc.confidence, 0) / monthlyIncomes.length
+      : 0;
+
+    return {
+      documentId,
+      documentType,
+      monthlyIncomes,
+      totalConfidence,
+      warnings,
+    };
+  }
+
+  /**
+   * Normalize month format to YYYY-MM
+   */
+  private normalizeMonth(month: string): string {
+    // Handle various formats: "2025-01", "01/2025", "January 2025", etc.
+    if (/^\d{4}-\d{2}$/.test(month)) {
+      return month;
+    }
+
+    // Try to parse and format
+    const date = new Date(month + '-01');
+    if (!isNaN(date.getTime())) {
+      return date.toISOString().slice(0, 7);
+    }
+
+    // Default to current month if parsing fails
+    return new Date().toISOString().slice(0, 7);
+  }
+
+  /**
+   * Normalize income source to valid enum value
+   */
+  private normalizeIncomeSource(source: string): ExtractedMonthlyIncome['incomeSource'] {
+    const validSources = [
+      'employment', 'self_employment', 'rental', 'interest',
+      'pension', 'government', 'spouse', 'alimony', 'contributions', 'other'
+    ];
+
+    const normalized = source?.toLowerCase().replace(/-/g, '_');
+    if (validSources.includes(normalized)) {
+      return normalized as ExtractedMonthlyIncome['incomeSource'];
+    }
+
+    // Map common variations
+    if (normalized?.includes('wage') || normalized?.includes('salary')) return 'employment';
+    if (normalized?.includes('business') || normalized?.includes('self')) return 'self_employment';
+    if (normalized?.includes('rent')) return 'rental';
+    if (normalized?.includes('dividend') || normalized?.includes('interest')) return 'interest';
+    if (normalized?.includes('retire') || normalized?.includes('pension')) return 'pension';
+    if (normalized?.includes('unemploy') || normalized?.includes('disability')) return 'government';
+    if (normalized?.includes('alimony') || normalized?.includes('maintenance')) return 'alimony';
+
+    return 'other';
   }
 
   /**
@@ -118,7 +431,13 @@ export class FinancialDataExtractor {
       ],
     });
 
-    const content = response.choices[0].message.content;
+    // Safely extract content from response
+    const content = response?.choices?.[0]?.message?.content;
+    if (!content) {
+      console.warn('LLM debt extraction returned unexpected response:', JSON.stringify(response));
+      return [];
+    }
+
     const jsonMatch = content.match(/\{[\s\S]*\}/);
 
     if (!jsonMatch) {
@@ -149,7 +468,13 @@ export class FinancialDataExtractor {
       ],
     });
 
-    const content = response.choices[0].message.content;
+    // Safely extract content from response
+    const content = response?.choices?.[0]?.message?.content;
+    if (!content) {
+      console.warn('LLM asset extraction returned unexpected response:', JSON.stringify(response));
+      return [];
+    }
+
     const jsonMatch = content.match(/\{[\s\S]*\}/);
 
     if (!jsonMatch) {
@@ -198,7 +523,24 @@ Include ONLY the JSON object in your response. Calculate monthly averages if dat
       ],
     });
 
-    const content = response.choices[0].message.content;
+    // Safely extract content from response
+    const content = response?.choices?.[0]?.message?.content;
+    if (!content) {
+      console.warn('LLM expense extraction returned unexpected response:', JSON.stringify(response));
+      return {
+        housing: 0,
+        utilities: 0,
+        food: 0,
+        transportation: 0,
+        insurance: 0,
+        medical: 0,
+        childcare: 0,
+        other: 0,
+        source: 'llm-extraction-failed',
+        confidence: 0,
+      };
+    }
+
     const jsonMatch = content.match(/\{[\s\S]*\}/);
 
     if (!jsonMatch) {
@@ -389,36 +731,121 @@ Important rules:
   }
 
   private buildDebtExtractionPrompt(documentType: string): string {
-    return `You are a bankruptcy paralegal assistant specializing in analyzing financial documents.
-Extract debt information from ${documentType} documents.
+    const typeSpecificInstructions: Record<string, string> = {
+      credit_card: `This is a CREDIT CARD STATEMENT. Look for:
+- Credit card company/bank name (Chase, Capital One, Discover, etc.)
+- Statement balance, current balance, or new balance
+- Minimum payment due
+- Account number (last 4 digits)
+- Credit limit and available credit
+The debt type should be "credit-card" and isSecured should be false.`,
+
+      loan_statement: `This is a LOAN STATEMENT. Look for:
+- Lender name
+- Principal balance or payoff amount
+- Monthly payment amount
+- Interest rate
+- Loan type (personal, auto, student, etc.)
+Determine if secured based on collateral mentioned.`,
+
+      medical_bill: `This is a MEDICAL BILL. Look for:
+- Healthcare provider or hospital name
+- Patient responsibility / amount due
+- Insurance adjustments
+- Account or invoice number
+The debt type should be "medical" and isSecured should be false.`,
+
+      collection_notice: `This is a COLLECTION NOTICE. Look for:
+- Collection agency name
+- Original creditor
+- Total amount owed
+- Account/reference number
+Debt type depends on original debt nature.`,
+
+      mortgage: `This is a MORTGAGE DOCUMENT. Look for:
+- Lender/servicer name
+- Principal balance
+- Monthly payment (P&I, escrow)
+- Interest rate
+- Property address
+The debt type should be "mortgage" and isSecured should be true with property as collateral.`,
+    };
+
+    const specificInstructions = typeSpecificInstructions[documentType] ||
+      `This is a ${documentType} document. Extract all debt information you can find.`;
+
+    return `You are a bankruptcy paralegal assistant extracting debt information for bankruptcy filing.
+
+${specificInstructions}
 
 Return a JSON object with this exact structure:
 {
   "debts": [
     {
       "creditorName": "<string>",
-      "accountNumber": "<string or null>",
+      "accountNumber": "<full account number if visible, or null>",
+      "accountLast4": "<last 4 digits of account number - IMPORTANT for matching>",
       "debtType": "credit-card" | "medical" | "personal-loan" | "auto-loan" | "mortgage" | "student-loan" | "tax-debt" | "other",
       "originalAmount": <number or null>,
       "currentBalance": <number>,
       "monthlyPayment": <number or null>,
       "isSecured": <boolean>,
       "collateralDescription": "<string or null>",
+      "statementDate": "<YYYY-MM-DD format - the statement date or closing date>",
       "confidence": <0-1 score>
     }
   ]
 }
 
-Important rules:
-- Secured debts have collateral (auto loans, mortgages)
-- Credit cards and medical bills are typically unsecured
-- Current balance is most important
+CRITICAL:
+- Extract accountLast4 (last 4 digits) - this is used to match the same account across multiple statements
+- Extract statementDate - this determines which statement is most recent
+- Extract the CURRENT BALANCE / STATEMENT BALANCE as the primary amount
+- If multiple balances shown, use the total/statement balance
+- Set confidence to 0.9+ for clearly visible amounts
 - Include ONLY the JSON object in your response`;
   }
 
   private buildAssetExtractionPrompt(documentType: string): string {
-    return `You are a bankruptcy paralegal assistant specializing in analyzing financial documents.
-Extract asset information from ${documentType} documents.
+    const typeSpecificInstructions: Record<string, string> = {
+      bank_statement: `This is a BANK STATEMENT. Look for:
+- Bank name (Chase, Wells Fargo, Bank of America, etc.) - IMPORTANT for matching
+- Account number - extract the LAST 4 DIGITS - CRITICAL for matching across statements
+- Account type (checking, savings, money market)
+- ENDING BALANCE or CURRENT BALANCE (use this as the asset value)
+- Statement date or statement period END date - CRITICAL for determining most recent
+
+The asset type should be "bank-account". Use the ending/current balance as estimatedValue.
+IMPORTANT: The accountLast4 and statementDate are CRITICAL for matching the same account across multiple monthly statements.`,
+
+      vehicle_title: `This is a VEHICLE TITLE. Look for:
+- Make, Model, Year of vehicle
+- VIN number
+- Owner name(s)
+- Lienholder if any (indicates encumbrance)
+The asset type should be "vehicle". Include make/model/year in description.
+Note: Title doesn't show value - use a reasonable estimate or 0 if unknown.`,
+
+      property_deed: `This is a PROPERTY DEED. Look for:
+- Property address or legal description
+- Owner/grantee names
+- Recording information
+The asset type should be "real-estate". Include address in description.
+Note: Deeds don't show value - use a reasonable estimate or 0 if unknown.`,
+
+      mortgage: `This is a MORTGAGE DOCUMENT. For asset extraction, look for:
+- Property address
+- Property value or appraised value if mentioned
+- Owner information
+The asset type should be "real-estate" if property info is present.`,
+    };
+
+    const specificInstructions = typeSpecificInstructions[documentType] ||
+      `This is a ${documentType} document. Extract all asset information you can find.`;
+
+    return `You are a bankruptcy paralegal assistant extracting asset information for bankruptcy filing.
+
+${specificInstructions}
 
 Return a JSON object with this exact structure:
 {
@@ -427,20 +854,23 @@ Return a JSON object with this exact structure:
       "assetType": "real-estate" | "vehicle" | "bank-account" | "investment" | "retirement" | "personal-property" | "other",
       "description": "<string>",
       "estimatedValue": <number>,
-      "ownershipPercentage": <number 0-100>,
+      "ownershipPercentage": <number 0-100, default 100>,
       "isExempt": <boolean or null>,
-      "encumbrances": <number (liens/loans against asset)>,
+      "encumbrances": <number, default 0>,
+      "accountLast4": "<last 4 digits of account number for bank accounts - CRITICAL>",
+      "institutionName": "<bank or institution name - CRITICAL for matching>",
+      "statementDate": "<YYYY-MM-DD - statement date or period end date - CRITICAL>",
       "confidence": <0-1 score>
     }
   ]
 }
 
-Important rules:
-- Bank accounts show balance as value
-- Vehicles should include make, model, year in description
-- Real estate should include address in description
-- Ownership percentage is usually 100 for single filers, 50 for joint
-- Encumbrances are loans secured by the asset
+CRITICAL:
+- For bank accounts: accountLast4, institutionName, and statementDate are REQUIRED for matching across multiple statements
+- For bank accounts, use the ENDING or CURRENT balance as estimatedValue
+- For vehicles, include year/make/model in description
+- For real estate, include the property address in description
+- Set confidence to 0.9+ for clearly visible values
 - Include ONLY the JSON object in your response`;
   }
 
@@ -477,18 +907,53 @@ Important rules:
       return [];
     }
 
-    return extracted.debts.map((debt: any) => ({
-      creditorName: debt.creditorName || 'Unknown Creditor',
-      accountNumber: debt.accountNumber || null,
-      debtType: debt.debtType || 'other',
-      originalAmount: debt.originalAmount ? parseFloat(debt.originalAmount) : null,
-      currentBalance: parseFloat(debt.currentBalance) || 0,
-      monthlyPayment: debt.monthlyPayment ? parseFloat(debt.monthlyPayment) : null,
-      isSecured: debt.isSecured || false,
-      collateralDescription: debt.collateralDescription || null,
-      source: 'llm-extraction',
-      confidence: debt.confidence || 0.7,
-    }));
+    return extracted.debts.map((debt: any) => {
+      // Extract last 4 digits from account number if not explicitly provided
+      let accountLast4 = debt.accountLast4 || null;
+      if (!accountLast4 && debt.accountNumber) {
+        const cleaned = debt.accountNumber.replace(/\D/g, '');
+        accountLast4 = cleaned.slice(-4) || null;
+      }
+
+      return {
+        creditorName: debt.creditorName || 'Unknown Creditor',
+        accountNumber: debt.accountNumber || null,
+        accountLast4,
+        debtType: debt.debtType || 'other',
+        originalAmount: debt.originalAmount ? parseFloat(debt.originalAmount) : null,
+        currentBalance: parseFloat(debt.currentBalance) || 0,
+        monthlyPayment: debt.monthlyPayment ? parseFloat(debt.monthlyPayment) : null,
+        isSecured: debt.isSecured || false,
+        collateralDescription: debt.collateralDescription || null,
+        statementDate: this.normalizeDate(debt.statementDate),
+        source: 'llm-extraction',
+        confidence: debt.confidence || 0.7,
+      };
+    });
+  }
+
+  /**
+   * Normalize date to YYYY-MM-DD format
+   */
+  private normalizeDate(date: string | null | undefined): string | null {
+    if (!date) return null;
+
+    // Already in YYYY-MM-DD format
+    if (/^\d{4}-\d{2}-\d{2}$/.test(date)) {
+      return date;
+    }
+
+    // Try to parse various formats
+    try {
+      const parsed = new Date(date);
+      if (!isNaN(parsed.getTime())) {
+        return parsed.toISOString().slice(0, 10);
+      }
+    } catch (e) {
+      // Parsing failed
+    }
+
+    return null;
   }
 
   private normalizeAssetData(extracted: any): ExtractedAsset[] {
@@ -496,15 +961,27 @@ Important rules:
       return [];
     }
 
-    return extracted.assets.map((asset: any) => ({
-      assetType: asset.assetType || 'other',
-      description: asset.description || 'Unknown asset',
-      estimatedValue: parseFloat(asset.estimatedValue) || 0,
-      ownershipPercentage: parseFloat(asset.ownershipPercentage) || 100,
-      isExempt: asset.isExempt !== undefined ? asset.isExempt : null,
-      encumbrances: parseFloat(asset.encumbrances) || 0,
-      source: 'llm-extraction',
-      confidence: asset.confidence || 0.7,
-    }));
+    return extracted.assets.map((asset: any) => {
+      // Extract last 4 digits if provided
+      let accountLast4 = asset.accountLast4 || null;
+      if (!accountLast4 && asset.accountNumber) {
+        const cleaned = asset.accountNumber.replace(/\D/g, '');
+        accountLast4 = cleaned.slice(-4) || null;
+      }
+
+      return {
+        assetType: asset.assetType || 'other',
+        description: asset.description || 'Unknown asset',
+        estimatedValue: parseFloat(asset.estimatedValue) || 0,
+        ownershipPercentage: parseFloat(asset.ownershipPercentage) || 100,
+        isExempt: asset.isExempt !== undefined ? asset.isExempt : null,
+        encumbrances: parseFloat(asset.encumbrances) || 0,
+        accountLast4,
+        institutionName: asset.institutionName || null,
+        statementDate: this.normalizeDate(asset.statementDate),
+        source: 'llm-extraction',
+        confidence: asset.confidence || 0.7,
+      };
+    });
   }
 }
