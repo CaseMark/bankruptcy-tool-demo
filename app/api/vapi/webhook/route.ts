@@ -150,23 +150,16 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({
         result: JSON.stringify({
           success: false,
-          error: 'Database connection not configured. Ensure connectionString is passed in call metadata. If testing from VAPI dashboard, metadata must be configured in assistant overrides.',
+          error: 'Database connection not configured. For Web SDK calls, set DATABASE_URL environment variable. For API/outbound calls, pass connectionString in metadata.',
         }),
       });
     }
 
+    // For Web SDK calls, userId might not be available - use a default
+    const effectiveUserId = userId || 'web-sdk-user';
+
     if (!userId) {
-      console.error('[VAPI Webhook] Missing userId in metadata', {
-        hasCallObject: !!body.call,
-        hasMetadata: !!body.call?.metadata,
-        metadataKeys: body.call?.metadata ? Object.keys(body.call.metadata) : [],
-      });
-      return NextResponse.json({
-        result: JSON.stringify({
-          success: false,
-          error: 'User ID not provided in metadata. Ensure userId is passed in call metadata. If testing from VAPI dashboard, metadata must be configured in assistant overrides.',
-        }),
-      });
+      console.warn('[VAPI Webhook] No userId in metadata, using default for Web SDK call');
     }
 
     const sql = postgres(connectionString);
@@ -176,22 +169,22 @@ export async function POST(request: NextRequest) {
 
       switch (name) {
         case 'check_existing_case':
-          result = await checkExistingCase(sql, parameters, userId);
+          result = await checkExistingCase(sql, parameters, effectiveUserId);
           break;
         case 'verify_client':
-          result = await verifyClient(sql, parameters, userId);
+          result = await verifyClient(sql, parameters, effectiveUserId);
           break;
         case 'create_new_case':
-          result = await createNewCase(sql, parameters, userId);
+          result = await createNewCase(sql, parameters, effectiveUserId);
           break;
         case 'update_case_intake':
-          result = await updateCaseIntake(sql, parameters, userId);
+          result = await updateCaseIntake(sql, parameters, effectiveUserId);
           break;
         case 'get_case_documents':
-          result = await getCaseDocuments(sql, parameters, userId);
+          result = await getCaseDocuments(sql, parameters, effectiveUserId);
           break;
         case 'get_required_documents':
-          result = await getRequiredDocuments(sql, parameters, userId);
+          result = await getRequiredDocuments(sql, parameters, effectiveUserId);
           break;
         default:
           console.error('[VAPI Webhook] Unknown function:', name);
