@@ -22,16 +22,37 @@ export async function POST(request: NextRequest) {
     try {
       const fullName = `${firstName.trim()} ${lastName.trim()}`;
 
+      // Check if user_id column exists (for backwards compatibility)
+      const hasUserIdColumn = await sql`
+        SELECT column_name
+        FROM information_schema.columns
+        WHERE table_name = 'bankruptcy_cases'
+          AND column_name = 'user_id'
+      `.then(rows => rows.length > 0);
+
       // Check for existing case
-      const existingCases = await sql`
-        SELECT id, client_name, client_phone
-        FROM bankruptcy_cases
-        WHERE user_id = ${userId}
-          AND LOWER(client_name) LIKE ${`%${firstName.trim().toLowerCase()}%`}
-          AND LOWER(client_name) LIKE ${`%${lastName.trim().toLowerCase()}%`}
-        ORDER BY created_at DESC
-        LIMIT 1
-      `;
+      let existingCases;
+      if (hasUserIdColumn) {
+        existingCases = await sql`
+          SELECT id, client_name, client_phone
+          FROM bankruptcy_cases
+          WHERE user_id = ${userId}
+            AND LOWER(client_name) LIKE ${`%${firstName.trim().toLowerCase()}%`}
+            AND LOWER(client_name) LIKE ${`%${lastName.trim().toLowerCase()}%`}
+          ORDER BY created_at DESC
+          LIMIT 1
+        `;
+      } else {
+        // For old databases without user_id column
+        existingCases = await sql`
+          SELECT id, client_name, client_phone
+          FROM bankruptcy_cases
+          WHERE LOWER(client_name) LIKE ${`%${firstName.trim().toLowerCase()}%`}
+            AND LOWER(client_name) LIKE ${`%${lastName.trim().toLowerCase()}%`}
+          ORDER BY created_at DESC
+          LIMIT 1
+        `;
+      }
 
       if (existingCases.length > 0) {
         const existingCase = existingCases[0];
@@ -52,24 +73,45 @@ export async function POST(request: NextRequest) {
       }
 
       // Create new case
-      const result = await sql`
-        INSERT INTO bankruptcy_cases (
-          user_id,
-          client_name,
-          client_phone,
-          case_type,
-          filing_type,
-          status
-        ) VALUES (
-          ${userId},
-          ${fullName},
-          ${phoneNumber || null},
-          'chapter7',
-          'individual',
-          'intake'
-        )
-        RETURNING id
-      `;
+      let result;
+      if (hasUserIdColumn) {
+        result = await sql`
+          INSERT INTO bankruptcy_cases (
+            user_id,
+            client_name,
+            client_phone,
+            case_type,
+            filing_type,
+            status
+          ) VALUES (
+            ${userId},
+            ${fullName},
+            ${phoneNumber || null},
+            'chapter7',
+            'individual',
+            'intake'
+          )
+          RETURNING id
+        `;
+      } else {
+        // For old databases without user_id column
+        result = await sql`
+          INSERT INTO bankruptcy_cases (
+            client_name,
+            client_phone,
+            case_type,
+            filing_type,
+            status
+          ) VALUES (
+            ${fullName},
+            ${phoneNumber || null},
+            'chapter7',
+            'individual',
+            'intake'
+          )
+          RETURNING id
+        `;
+      }
 
       return NextResponse.json({
         caseId: result[0].id,
