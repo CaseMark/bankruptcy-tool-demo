@@ -208,14 +208,22 @@ export function IntakeCallButton({ className }: IntakeCallButtonProps) {
                     <div
                       key={index}
                       className={`flex ${
-                        transcript.role === "user" ? "justify-end" : "justify-start"
+                        transcript.role === "system"
+                          ? "justify-center"
+                          : transcript.role === "user"
+                            ? "justify-end"
+                            : "justify-start"
                       }`}
                     >
                       <div
-                        className={`max-w-[80%] rounded-lg px-3 py-2 text-sm ${
-                          transcript.role === "user"
-                            ? "bg-primary text-white"
-                            : "bg-muted text-foreground"
+                        className={`${
+                          transcript.role === "system"
+                            ? "text-xs text-muted-foreground italic py-1"
+                            : `max-w-[80%] rounded-lg px-3 py-2 text-sm ${
+                                transcript.role === "user"
+                                  ? "bg-primary text-white"
+                                  : "bg-muted text-foreground"
+                              }`
                         }`}
                       >
                         {transcript.text}
