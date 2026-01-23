@@ -17,12 +17,14 @@ import {
   BarChart3,
   Users,
   Shield,
-  Trash2
+  Trash2,
+  Phone
 } from 'lucide-react';
 import Link from 'next/link';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Alert, AlertDescription } from '@/components/ui/alert';
+import { formatForDisplay } from '@/lib/utils/phone-validation';
 import {
   AlertDialog,
   AlertDialogAction,
@@ -263,6 +265,20 @@ export default function CasesPage() {
 
       {/* Main Content */}
       <main className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
+        {/* Voice Intake Info Box */}
+        <div className="mb-6 bg-orange-50 border border-orange-200 rounded-lg p-4 flex items-center gap-3">
+          <Phone className="w-5 h-5 text-orange-600 flex-shrink-0" />
+          <p className="text-sm text-orange-800">
+            Clients can call{' '}
+            <span className="inline-flex items-center mx-1 px-2.5 py-1 bg-white border border-orange-300 rounded-md font-semibold text-orange-900 tracking-wide">
+              {process.env.NEXT_PUBLIC_VAPI_PHONE_NUMBER
+                ? formatForDisplay(process.env.NEXT_PUBLIC_VAPI_PHONE_NUMBER)
+                : '+1 (628) 244 0385'}
+            </span>
+            {' '}and our voice agent will begin the automated intake process.
+          </p>
+        </div>
+
         {cases.length === 0 ? (
           /* Empty State */
           <Card className="text-center py-12">

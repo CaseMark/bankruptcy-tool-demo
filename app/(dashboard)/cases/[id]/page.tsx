@@ -14,11 +14,13 @@ import {
   AlertTriangle,
   CheckCircle2,
   Pencil,
+  Phone,
 } from "lucide-react";
 import Link from "next/link";
 import { DocumentUpload } from "@/components/cases/document-upload";
 import { CaseStatusBadge } from "@/components/cases/case-status-badge";
 import { EditClientModal } from "@/components/cases/edit-client-modal";
+import { OutboundCallModal } from "@/components/voice/outbound-call-modal";
 import {
   getRequiredDocuments,
   getMissingDocuments,
@@ -77,6 +79,7 @@ export default function CaseDetailPage() {
   const [deleting, setDeleting] = useState(false);
   const [showAllMissingDocs, setShowAllMissingDocs] = useState(false);
   const [editModalOpen, setEditModalOpen] = useState(false);
+  const [outboundModalOpen, setOutboundModalOpen] = useState(false);
 
   const handleDeleteCase = async () => {
     const connectionString = localStorage.getItem('bankruptcy_db_connection');
@@ -223,14 +226,23 @@ export default function CaseDetailPage() {
           <ArrowLeft className="w-4 h-4" />
           Back to Cases
         </Button>
-        <Button
-          variant="destructive"
-          onClick={() => setDeleteDialogOpen(true)}
-          className="flex items-center gap-2"
-        >
-          <Trash2 className="w-4 h-4" />
-          Delete Case
-        </Button>
+        <div className="flex items-center gap-2">
+          <Button
+            onClick={() => setOutboundModalOpen(true)}
+            className="flex items-center gap-2"
+          >
+            <Phone className="w-4 h-4" />
+            Call for Intake
+          </Button>
+          <Button
+            variant="destructive"
+            onClick={() => setDeleteDialogOpen(true)}
+            className="flex items-center gap-2"
+          >
+            <Trash2 className="w-4 h-4" />
+            Delete Case
+          </Button>
+        </div>
       </div>
 
       {/* Header */}
@@ -364,6 +376,21 @@ export default function CaseDetailPage() {
         caseData={caseData}
         onSuccess={(updatedCase) => setCaseData(updatedCase)}
       />
+
+      {/* Outbound Call Modal */}
+      {caseData && (
+        <OutboundCallModal
+          open={outboundModalOpen}
+          onOpenChange={setOutboundModalOpen}
+          clientName={caseData.clientName}
+          caseId={caseData.id}
+          existingPhone={caseData.clientPhone}
+          onCallScheduled={() => {
+            // Optionally refresh case data after call is scheduled
+            fetchCaseData();
+          }}
+        />
+      )}
 
       {/* Delete Confirmation Dialog */}
       <AlertDialog open={deleteDialogOpen} onOpenChange={setDeleteDialogOpen}>

@@ -303,6 +303,19 @@ async function updateCaseIntake(
     };
   }
 
+  // CRITICAL: Verify case exists before attempting update
+  // This function should NEVER create a new case
+  const existingCase = await sql`
+    SELECT id FROM bankruptcy_cases WHERE id = ${caseId}
+  `;
+
+  if (existingCase.length === 0) {
+    return {
+      success: false,
+      message: 'Case not found. Cannot update non-existent case. Please contact support.',
+    };
+  }
+
   // Build dynamic update based on provided fields
   const updates: Record<string, unknown> = {};
 
