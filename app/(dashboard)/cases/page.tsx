@@ -143,6 +143,7 @@ export default function CasesPage() {
   };
   const [selectedFeature, setSelectedFeature] = useState<FeatureConfig | null>(null);
   const [modalOpen, setModalOpen] = useState(false);
+  const [apiKeyDialogOpen, setApiKeyDialogOpen] = useState(false);
 
   const handleFeatureClick = (featureId: string) => {
     const feature = P0_FEATURES[featureId];
@@ -245,12 +246,10 @@ export default function CasesPage() {
             </div>
             <div className="flex items-center gap-3">
               <IntakeCallButton />
-              <Link href="/login">
-                <Button variant="outline">
-                  <Key className="w-4 h-4 mr-2" />
-                  Configure API Key
-                </Button>
-              </Link>
+              <Button variant="outline" onClick={() => setApiKeyDialogOpen(true)}>
+                <Key className="w-4 h-4 mr-2" />
+                Configure API Key
+              </Button>
               <Link href="/cases/new">
                 <Button>
                   <Plus className="w-4 h-4 mr-2" />
@@ -407,7 +406,7 @@ export default function CasesPage() {
             <AlertDialogHeader>
               <AlertDialogTitle>Delete Case</AlertDialogTitle>
               <AlertDialogDescription>
-                Are you sure you want to delete the case for <strong>{caseToDelete?.clientName}</strong>? 
+                Are you sure you want to delete the case for <strong>{caseToDelete?.clientName}</strong>?
                 This action cannot be undone and will permanently remove all case data, documents, and forms.
               </AlertDialogDescription>
             </AlertDialogHeader>
@@ -419,6 +418,24 @@ export default function CasesPage() {
                 className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
               >
                 {deleting ? 'Deleting...' : 'Delete Case'}
+              </AlertDialogAction>
+            </AlertDialogFooter>
+          </AlertDialogContent>
+        </AlertDialog>
+
+        {/* API Key Change Confirmation Dialog */}
+        <AlertDialog open={apiKeyDialogOpen} onOpenChange={setApiKeyDialogOpen}>
+          <AlertDialogContent>
+            <AlertDialogHeader>
+              <AlertDialogTitle className="text-xl">Change API Key</AlertDialogTitle>
+              <AlertDialogDescription>
+                Are you sure you want to change your API key?
+              </AlertDialogDescription>
+            </AlertDialogHeader>
+            <AlertDialogFooter>
+              <AlertDialogCancel>Cancel</AlertDialogCancel>
+              <AlertDialogAction onClick={() => router.push('/login')}>
+                Proceed
               </AlertDialogAction>
             </AlertDialogFooter>
           </AlertDialogContent>

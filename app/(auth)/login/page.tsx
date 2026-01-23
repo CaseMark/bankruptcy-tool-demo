@@ -90,7 +90,7 @@ export default function SimpleLoginPage() {
             href="https://case.dev"
             target="_blank"
             rel="noopener noreferrer"
-            className="inline-flex items-center gap-1.5 rounded-full bg-accent px-2.5 py-1 text-xs font-medium text-foreground hover:bg-accent/80"
+            className="inline-flex items-center gap-1.5 rounded-full bg-white px-2.5 py-1 text-xs font-medium text-foreground hover:bg-gray-50 border border-gray-200"
           >
             <span>built with</span>
             <Image
