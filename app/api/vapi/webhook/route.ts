@@ -47,6 +47,14 @@ function getConnectionString(metadata?: Record<string, unknown>): string | null 
   return process.env.DATABASE_URL || null;
 }
 
+// Get userId from request metadata
+function getUserId(metadata?: Record<string, unknown>): string | null {
+  if (metadata?.userId) {
+    return metadata.userId as string;
+  }
+  return null;
+}
+
 export async function POST(request: NextRequest) {
   try {
     const body: VapiRequest = await request.json();
@@ -58,12 +66,22 @@ export async function POST(request: NextRequest) {
 
     const { name, parameters } = body.message.functionCall;
     const connectionString = getConnectionString(body.call?.metadata);
+    const userId = getUserId(body.call?.metadata);
 
     if (!connectionString) {
       return NextResponse.json({
         result: JSON.stringify({
           success: false,
           error: 'Database connection not configured',
+        }),
+      });
+    }
+
+    if (!userId) {
+      return NextResponse.json({
+        result: JSON.stringify({
+          success: false,
+          error: 'User ID not provided in metadata',
         }),
       });
     }
@@ -75,22 +93,22 @@ export async function POST(request: NextRequest) {
 
       switch (name) {
         case 'check_existing_case':
-          result = await checkExistingCase(sql, parameters);
+          result = await checkExistingCase(sql, parameters, userId);
           break;
         case 'verify_client':
-          result = await verifyClient(sql, parameters);
+          result = await verifyClient(sql, parameters, userId);
           break;
         case 'create_new_case':
-          result = await createNewCase(sql, parameters);
+          result = await createNewCase(sql, parameters, userId);
           break;
         case 'update_case_intake':
-          result = await updateCaseIntake(sql, parameters);
+          result = await updateCaseIntake(sql, parameters, userId);
           break;
         case 'get_case_documents':
-          result = await getCaseDocuments(sql, parameters);
+          result = await getCaseDocuments(sql, parameters, userId);
           break;
         case 'get_required_documents':
-          result = await getRequiredDocuments(sql, parameters);
+          result = await getRequiredDocuments(sql, parameters, userId);
           break;
         default:
           result = { success: false, error: `Unknown function: ${name}` };
@@ -120,7 +138,8 @@ export async function POST(request: NextRequest) {
  */
 async function checkExistingCase(
   sql: postgres.Sql,
-  params: Record<string, unknown>
+  params: Record<string, unknown>,
+  userId: string
 ): Promise<{ hasExistingCase: boolean; caseId?: string; message: string }> {
   const firstName = (params.first_name as string)?.trim().toLowerCase();
   const lastName = (params.last_name as string)?.trim().toLowerCase();
@@ -132,11 +151,12 @@ async function checkExistingCase(
     };
   }
 
-  // Search for cases matching the name (case-insensitive partial match)
+  // Search for cases matching the name (case-insensitive partial match) and userId
   const cases = await sql`
     SELECT id, client_name, status, created_at
     FROM bankruptcy_cases
-    WHERE LOWER(client_name) LIKE ${`%${firstName}%`}
+    WHERE user_id = ${userId}
+      AND LOWER(client_name) LIKE ${`%${firstName}%`}
       AND LOWER(client_name) LIKE ${`%${lastName}%`}
     ORDER BY created_at DESC
     LIMIT 5
@@ -152,44 +172,22 @@ async function checkExistingCase(
 
   // NO EXISTING CASE - Create one immediately to prevent data loss if call drops
   const fullName = `${firstName.charAt(0).toUpperCase() + firstName.slice(1)} ${lastName.charAt(0).toUpperCase() + lastName.slice(1)}`;
-  const newCaseId = `case_${Date.now()}_${Math.random().toString(36).substring(2, 9)}`;
 
-  // Ensure table exists
-  await sql`
-    CREATE TABLE IF NOT EXISTS bankruptcy_cases (
-      id TEXT PRIMARY KEY,
-      client_name TEXT NOT NULL,
-      client_email TEXT,
-      client_phone TEXT,
-      ssn_last4 TEXT,
-      address TEXT,
-      city TEXT,
-      state TEXT,
-      zip TEXT,
-      county TEXT,
-      case_type TEXT NOT NULL,
-      filing_type TEXT NOT NULL,
-      household_size INTEGER,
-      status TEXT NOT NULL,
-      created_at TIMESTAMP NOT NULL DEFAULT NOW(),
-      updated_at TIMESTAMP NOT NULL DEFAULT NOW()
-    )
-  `;
-
-  // Create minimal case with just the name
-  await sql`
+  // Create minimal case with just the name - let database generate UUID
+  const result = await sql`
     INSERT INTO bankruptcy_cases (
-      id, client_name, case_type, filing_type, status, created_at, updated_at
+      user_id, client_name, case_type, filing_type, status
     ) VALUES (
-      ${newCaseId},
+      ${userId},
       ${fullName},
       'chapter7',
       'individual',
-      'intake',
-      NOW(),
-      NOW()
+      'intake'
     )
+    RETURNING id
   `;
+
+  const newCaseId = result[0].id;
 
   return {
     hasExistingCase: false,
@@ -204,7 +202,8 @@ async function checkExistingCase(
  */
 async function verifyClient(
   sql: postgres.Sql,
-  params: Record<string, unknown>
+  params: Record<string, unknown>,
+  userId: string
 ): Promise<{
   verified: boolean;
   caseId?: string;
@@ -229,13 +228,14 @@ async function verifyClient(
     };
   }
 
-  // Find case matching name AND SSN last 4
+  // Find case matching name AND SSN last 4 AND userId
   const cases = await sql`
     SELECT id, client_name, client_email, client_phone,
            case_type, filing_type, status, household_size,
            address, city, state, zip, county, created_at
     FROM bankruptcy_cases
-    WHERE LOWER(client_name) LIKE ${`%${firstName}%`}
+    WHERE user_id = ${userId}
+      AND LOWER(client_name) LIKE ${`%${firstName}%`}
       AND LOWER(client_name) LIKE ${`%${lastName}%`}
       AND ssn_last4 = ${ssnLast4}
     ORDER BY created_at DESC
@@ -276,7 +276,8 @@ async function verifyClient(
  */
 async function createNewCase(
   sql: postgres.Sql,
-  params: Record<string, unknown>
+  params: Record<string, unknown>,
+  userId: string
 ): Promise<{ success: boolean; caseId?: string; message: string }> {
   const clientName = params.client_name as string;
   const ssnLast4 = params.ssn_last_4 as string;
@@ -290,50 +291,26 @@ async function createNewCase(
     };
   }
 
-  // Generate a unique ID
-  const id = `case_${Date.now()}_${Math.random().toString(36).substring(2, 9)}`;
-
-  // Ensure table exists
-  await sql`
-    CREATE TABLE IF NOT EXISTS bankruptcy_cases (
-      id TEXT PRIMARY KEY,
-      client_name TEXT NOT NULL,
-      client_email TEXT,
-      client_phone TEXT,
-      ssn_last4 TEXT,
-      address TEXT,
-      city TEXT,
-      state TEXT,
-      zip TEXT,
-      county TEXT,
-      case_type TEXT NOT NULL,
-      filing_type TEXT NOT NULL,
-      household_size INTEGER,
-      status TEXT NOT NULL,
-      created_at TIMESTAMP NOT NULL DEFAULT NOW(),
-      updated_at TIMESTAMP NOT NULL DEFAULT NOW()
-    )
-  `;
-
-  // Insert new case with basic info
-  await sql`
+  // Insert new case with basic info - let database generate UUID
+  const result = await sql`
     INSERT INTO bankruptcy_cases (
-      id, client_name, ssn_last4, case_type, filing_type, status, created_at, updated_at
+      user_id, client_name, ssn_last4, case_type, filing_type, status
     ) VALUES (
-      ${id},
+      ${userId},
       ${clientName},
       ${ssnLast4 || null},
       ${caseType},
       ${filingType},
-      'intake',
-      NOW(),
-      NOW()
+      'intake'
     )
+    RETURNING id
   `;
+
+  const newCaseId = result[0].id;
 
   return {
     success: true,
-    caseId: id,
+    caseId: newCaseId,
     message: `I've created a new ${caseType} bankruptcy case for ${clientName}. Let's continue gathering your information.`,
   };
 }
@@ -350,7 +327,8 @@ async function createNewCase(
  */
 async function updateCaseIntake(
   sql: postgres.Sql,
-  params: Record<string, unknown>
+  params: Record<string, unknown>,
+  userId: string
 ): Promise<{ success: boolean; message: string }> {
   const caseId = params.case_id as string;
 
@@ -361,16 +339,17 @@ async function updateCaseIntake(
     };
   }
 
-  // CRITICAL: Verify case exists before attempting update
+  // CRITICAL: Verify case exists and belongs to user before attempting update
   // This function should NEVER create a new case
   const existingCase = await sql`
-    SELECT id FROM bankruptcy_cases WHERE id = ${caseId}
+    SELECT id FROM bankruptcy_cases
+    WHERE id = ${caseId} AND user_id = ${userId}
   `;
 
   if (existingCase.length === 0) {
     return {
       success: false,
-      message: 'Case not found. Cannot update non-existent case. Please contact support.',
+      message: 'Case not found or does not belong to this user. Cannot update non-existent case. Please contact support.',
     };
   }
 
@@ -397,7 +376,7 @@ async function updateCaseIntake(
     };
   }
 
-  // Perform update
+  // Perform update - with userId filter for security
   await sql`
     UPDATE bankruptcy_cases
     SET
@@ -413,7 +392,7 @@ async function updateCaseIntake(
       case_type = COALESCE(${(updates.case_type as string) ?? null}, case_type),
       filing_type = COALESCE(${(updates.filing_type as string) ?? null}, filing_type),
       updated_at = NOW()
-    WHERE id = ${caseId as string}
+    WHERE id = ${caseId as string} AND user_id = ${userId}
   `;
 
   const fieldsUpdated = Object.keys(updates).length;
@@ -428,7 +407,8 @@ async function updateCaseIntake(
  */
 async function getCaseDocuments(
   sql: postgres.Sql,
-  params: Record<string, unknown>
+  params: Record<string, unknown>,
+  userId: string
 ): Promise<{
   success: boolean;
   documents?: Array<{ fileName: string; documentType: string; status: string }>;
@@ -440,6 +420,19 @@ async function getCaseDocuments(
     return {
       success: false,
       message: 'Case ID is required. Please verify your identity first.',
+    };
+  }
+
+  // Verify case belongs to user
+  const caseCheck = await sql`
+    SELECT id FROM bankruptcy_cases
+    WHERE id = ${caseId} AND user_id = ${userId}
+  `;
+
+  if (caseCheck.length === 0) {
+    return {
+      success: false,
+      message: 'Case not found or does not belong to this user.',
     };
   }
 
@@ -495,7 +488,8 @@ async function getCaseDocuments(
  */
 async function getRequiredDocuments(
   sql: postgres.Sql,
-  params: Record<string, unknown>
+  params: Record<string, unknown>,
+  userId: string
 ): Promise<{
   success: boolean;
   required: string[];
@@ -512,6 +506,22 @@ async function getRequiredDocuments(
       optional: [],
       uploaded: [],
       message: 'Case ID is required. Please verify your identity first.',
+    };
+  }
+
+  // Verify case belongs to user
+  const caseCheck = await sql`
+    SELECT id FROM bankruptcy_cases
+    WHERE id = ${caseId} AND user_id = ${userId}
+  `;
+
+  if (caseCheck.length === 0) {
+    return {
+      success: false,
+      required: [],
+      optional: [],
+      uploaded: [],
+      message: 'Case not found or does not belong to this user.',
     };
   }
 
