@@ -18,7 +18,8 @@ import {
   Users,
   Shield,
   Trash2,
-  Phone
+  Phone,
+  CheckCircle2
 } from 'lucide-react';
 import Link from 'next/link';
 import { Button } from '@/components/ui/button';
@@ -112,6 +113,7 @@ export default function CasesPage() {
   const [caseToDelete, setCaseToDelete] = useState<{ id: string; clientName: string } | null>(null);
   const [deleting, setDeleting] = useState(false);
   const [phoneCopied, setPhoneCopied] = useState(false);
+  const [callScheduled, setCallScheduled] = useState(false);
 
   const handleCopyPhone = async () => {
     const phoneNumber = process.env.NEXT_PUBLIC_VAPI_PHONE_NUMBER || '16282440385';
@@ -677,10 +679,22 @@ export default function CasesPage() {
         open={outboundIntakeModalOpen}
         onOpenChange={setOutboundIntakeModalOpen}
         onCallScheduled={() => {
+          // Show success notification
+          setCallScheduled(true);
+          setTimeout(() => setCallScheduled(false), 3000);
+
           // Refresh page to show new case
           window.location.reload();
         }}
       />
+
+      {/* Call Scheduled Notification */}
+      {callScheduled && (
+        <div className="fixed top-4 left-1/2 -translate-x-1/2 z-50 bg-green-600 text-white px-6 py-3 rounded-lg shadow-xl flex items-center gap-2 animate-in fade-in slide-in-from-top-2 duration-300">
+          <CheckCircle2 className="w-5 h-5" />
+          <span className="font-medium">Call scheduled</span>
+        </div>
+      )}
     </div>
   );
 }

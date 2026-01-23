@@ -73,10 +73,14 @@ export async function POST(request: NextRequest) {
       }
 
       // Create new case
+      // Generate UUID explicitly to work with databases that don't have auto-generation configured
+      const newCaseId = crypto.randomUUID();
+
       let result;
       if (hasUserIdColumn) {
         result = await sql`
           INSERT INTO bankruptcy_cases (
+            id,
             user_id,
             client_name,
             client_phone,
@@ -84,6 +88,7 @@ export async function POST(request: NextRequest) {
             filing_type,
             status
           ) VALUES (
+            ${newCaseId},
             ${userId},
             ${fullName},
             ${phoneNumber || null},
@@ -97,12 +102,14 @@ export async function POST(request: NextRequest) {
         // For old databases without user_id column
         result = await sql`
           INSERT INTO bankruptcy_cases (
+            id,
             client_name,
             client_phone,
             case_type,
             filing_type,
             status
           ) VALUES (
+            ${newCaseId},
             ${fullName},
             ${phoneNumber || null},
             'chapter7',
