@@ -92,6 +92,7 @@ export default function CaseDocumentsPage() {
   const fileInputRef = useRef<HTMLInputElement>(null);
   const quickUploadRef = useRef<HTMLInputElement>(null);
   const eventSourcesRef = useRef<Map<number, EventSource>>(new Map());
+  const reprocessEventSourceRef = useRef<EventSource | null>(null);
 
   // Filter state
   const [filterType, setFilterType] = useState<string>("all");
@@ -118,6 +119,11 @@ export default function CaseDocumentsPage() {
     return () => {
       eventSourcesRef.current.forEach((es) => es.close());
       eventSourcesRef.current.clear();
+      // Also cleanup reprocess EventSource
+      if (reprocessEventSourceRef.current) {
+        reprocessEventSourceRef.current.close();
+        reprocessEventSourceRef.current = null;
+      }
     };
   }, []);
 
@@ -447,8 +453,14 @@ export default function CaseDocumentsPage() {
   };
 
   // Re-process a document to re-run LLM extraction
-  const handleReprocess = async (doc: Document) => {
+  const handleReprocess = useCallback((doc: Document) => {
     if (!connectionString || !apiKey) return;
+
+    // Close any existing reprocess connection
+    if (reprocessEventSourceRef.current) {
+      reprocessEventSourceRef.current.close();
+      reprocessEventSourceRef.current = null;
+    }
 
     setReprocessingId(doc.id);
 
@@ -462,6 +474,7 @@ export default function CaseDocumentsPage() {
 
       const url = `/api/documents/${doc.id}/status?${searchParams.toString()}`;
       const eventSource = new EventSource(url);
+      reprocessEventSourceRef.current = eventSource;
 
       eventSource.addEventListener("status", (event) => {
         try {
@@ -470,6 +483,7 @@ export default function CaseDocumentsPage() {
           // If completed, close connection and refresh documents
           if (data.status === "completed" || data.status === "error") {
             eventSource.close();
+            reprocessEventSourceRef.current = null;
             setReprocessingId(null);
             fetchDocuments();
           }
@@ -480,6 +494,7 @@ export default function CaseDocumentsPage() {
 
       eventSource.addEventListener("error", () => {
         eventSource.close();
+        reprocessEventSourceRef.current = null;
         setReprocessingId(null);
         fetchDocuments();
       });
@@ -488,7 +503,7 @@ export default function CaseDocumentsPage() {
       console.error('Reprocess error:', err);
       setReprocessingId(null);
     }
-  };
+  }, [connectionString, apiKey, fetchDocuments]);
 
   if (loading) {
     return (
@@ -864,7 +879,12 @@ export default function CaseDocumentsPage() {
           <Upload className="w-10 h-10 mx-auto mb-3 text-muted-foreground" />
           <p className="font-medium mb-1">Drop files here</p>
           <p className="text-sm text-muted-foreground mb-4">or click to browse</p>
-          <Button onClick={() => fileInputRef.current?.click()}>
+          <Button onClick={(e) => {
+            e.stopPropagation();
+            e.preventDefault();
+            // Use setTimeout to ensure the click happens after React's event processing
+            setTimeout(() => fileInputRef.current?.click(), 0);
+          }}>
             Select Files
           </Button>
           <p className="text-xs text-muted-foreground mt-4">

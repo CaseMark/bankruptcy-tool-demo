@@ -208,36 +208,67 @@ export class FinancialDataExtractor {
   private buildMonthlyIncomePrompt(documentType: string): string {
     const today = new Date();
     const currentMonth = today.toISOString().slice(0, 7); // YYYY-MM
+    const currentYear = today.getFullYear();
+    const lastYear = currentYear - 1;
 
-    return `You are a bankruptcy paralegal assistant extracting income data for Chapter 7 means test compliance.
+    const typeSpecificInstructions: Record<string, string> = {
+      paystub: `This is a PAYSTUB. Extract:
+- Pay period dates and/or check date
+- Gross pay (total earnings before deductions)
+- Net pay (take-home after deductions)
+- Employer name
+- YTD (year-to-date) amounts if shown
 
-CRITICAL: For Form B 122A-2, we need income broken down by CALENDAR MONTH (the month income was RECEIVED).
+Create ONE income record per pay period shown on the stub.
+Use the check date or pay period end date to determine incomeMonth.`,
 
-Document type: ${documentType}
-Current month: ${currentMonth}
+      w2: `This is a W-2 FORM. Extract:
+- Box 1: Wages, tips, other compensation (this is the annual gross)
+- Employer name (Box c)
+- Tax year from the form
 
-Based on the document type, extract income as follows:
+IMPORTANT: For W-2s, create a SINGLE income record with:
+- incomeMonth: Use the LAST month of the tax year (e.g., "${lastYear}-12" for a ${lastYear} W-2)
+- grossAmount: The ANNUAL amount from Box 1 (do NOT divide by 12)
+- description: "Annual W-2 wages for [year]"
+- employer: The employer name from the W-2
 
-FOR PAYSTUBS:
-- Identify the pay period end date and/or check date
-- Determine which calendar month(s) the payment was received in
-- If a paycheck spans two months, allocate to the month of the check date (when received)
-- Extract the gross pay for each payment
+This allows the system to properly calculate monthly averages.`,
 
-FOR W-2s:
-- Extract annual gross wages (Box 1)
-- Divide by 12 to get monthly amount
-- The income should be attributed to each month of the tax year (January through December of that year)
-- Return 12 monthly records, one for each month
+      tax_return: `This is a TAX RETURN. Extract:
+- Total income or Adjusted Gross Income (AGI)
+- Tax year from the form
+- Specific income types if visible (wages, self-employment, interest, etc.)
 
-FOR 1099s:
-- Extract total income
-- If periodic (e.g., quarterly), distribute to appropriate months
-- If annual, divide by 12 across all months of that tax year
+IMPORTANT: For tax returns, create a SINGLE income record with:
+- incomeMonth: Use the LAST month of the tax year (e.g., "${lastYear}-12" for a ${lastYear} return)
+- grossAmount: The ANNUAL total income or AGI (do NOT divide by 12)
+- incomeSource: Based on primary income type shown
+- description: "Annual tax return income for [year]"
 
-FOR TAX RETURNS:
-- Extract income from various schedules
-- Distribute across the 12 months of the tax year
+This allows the system to properly calculate monthly averages.`,
+
+      '1099': `This is a 1099 FORM. Extract:
+- Total income amount from the relevant box
+- Payer name
+- Tax year
+- Type of 1099 (MISC, INT, DIV, NEC, etc.)
+
+Create a SINGLE income record with:
+- incomeMonth: Use the LAST month of the tax year
+- grossAmount: The total amount (do NOT divide by 12)
+- incomeSource: Based on 1099 type (interest, self_employment, other)
+- description: "1099 income from [payer] for [year]"`,
+    };
+
+    const specificInstructions = typeSpecificInstructions[documentType] ||
+      `This is a ${documentType} document. Extract all income information you can find.`;
+
+    return `You are a bankruptcy paralegal assistant extracting income data for Chapter 7 means test.
+
+${specificInstructions}
+
+Current date: ${currentMonth}
 
 Return a JSON object with this EXACT structure:
 {
@@ -256,21 +287,20 @@ Return a JSON object with this EXACT structure:
 }
 
 Income source mapping:
-- employment: wages, salary, tips, bonuses, overtime, commissions
-- self_employment: business, profession, or farm net income
-- rental: rent and real property income
-- interest: interest, dividends, royalties
-- pension: pension and retirement income
-- government: state disability, unemployment benefits
-- alimony: alimony or maintenance received
-- contributions: regular contributions from others (family support)
-- other: any other income source
+- employment: wages, salary, tips, bonuses (W-2 income)
+- self_employment: business income, 1099-NEC, Schedule C
+- rental: rental property income
+- interest: 1099-INT, bank interest, dividends
+- pension: retirement distributions
+- government: unemployment, disability
+- alimony: alimony received
+- contributions: family support
+- other: any other income
 
 IMPORTANT:
-- Use YYYY-MM format for incomeMonth (e.g., "2025-01" for January 2025)
-- grossAmount must be the actual gross amount received that month
-- Set confidence lower if dates are unclear or amounts are estimated
-- Include ALL income found in the document
+- Use YYYY-MM format for incomeMonth
+- For annual documents (W-2, tax returns, 1099s), use the full annual amount - do NOT divide
+- Set confidence to 0.9+ when amounts are clearly visible
 - Return ONLY the JSON object`;
   }
 
@@ -537,8 +567,52 @@ Important rules:
   }
 
   private buildDebtExtractionPrompt(documentType: string): string {
-    return `You are a bankruptcy paralegal assistant specializing in analyzing financial documents.
-Extract debt information from ${documentType} documents.
+    const typeSpecificInstructions: Record<string, string> = {
+      credit_card: `This is a CREDIT CARD STATEMENT. Look for:
+- Credit card company/bank name (Chase, Capital One, Discover, etc.)
+- Statement balance, current balance, or new balance
+- Minimum payment due
+- Account number (last 4 digits)
+- Credit limit and available credit
+The debt type should be "credit-card" and isSecured should be false.`,
+
+      loan_statement: `This is a LOAN STATEMENT. Look for:
+- Lender name
+- Principal balance or payoff amount
+- Monthly payment amount
+- Interest rate
+- Loan type (personal, auto, student, etc.)
+Determine if secured based on collateral mentioned.`,
+
+      medical_bill: `This is a MEDICAL BILL. Look for:
+- Healthcare provider or hospital name
+- Patient responsibility / amount due
+- Insurance adjustments
+- Account or invoice number
+The debt type should be "medical" and isSecured should be false.`,
+
+      collection_notice: `This is a COLLECTION NOTICE. Look for:
+- Collection agency name
+- Original creditor
+- Total amount owed
+- Account/reference number
+Debt type depends on original debt nature.`,
+
+      mortgage: `This is a MORTGAGE DOCUMENT. Look for:
+- Lender/servicer name
+- Principal balance
+- Monthly payment (P&I, escrow)
+- Interest rate
+- Property address
+The debt type should be "mortgage" and isSecured should be true with property as collateral.`,
+    };
+
+    const specificInstructions = typeSpecificInstructions[documentType] ||
+      `This is a ${documentType} document. Extract all debt information you can find.`;
+
+    return `You are a bankruptcy paralegal assistant extracting debt information for bankruptcy filing.
+
+${specificInstructions}
 
 Return a JSON object with this exact structure:
 {
@@ -557,16 +631,50 @@ Return a JSON object with this exact structure:
   ]
 }
 
-Important rules:
-- Secured debts have collateral (auto loans, mortgages)
-- Credit cards and medical bills are typically unsecured
-- Current balance is most important
+IMPORTANT:
+- Extract the CURRENT BALANCE as the primary amount (statement balance, amount due, payoff amount)
+- If multiple balances shown, use the total/statement balance
+- Set confidence to 0.9+ for clearly visible amounts
 - Include ONLY the JSON object in your response`;
   }
 
   private buildAssetExtractionPrompt(documentType: string): string {
-    return `You are a bankruptcy paralegal assistant specializing in analyzing financial documents.
-Extract asset information from ${documentType} documents.
+    const typeSpecificInstructions: Record<string, string> = {
+      bank_statement: `This is a BANK STATEMENT. Look for:
+- Bank name and account type (checking, savings, money market)
+- Account number (last 4 digits)
+- ENDING BALANCE or CURRENT BALANCE (use this as the asset value)
+- Statement period dates
+The asset type should be "bank-account". Use the ending/current balance as estimatedValue.`,
+
+      vehicle_title: `This is a VEHICLE TITLE. Look for:
+- Make, Model, Year of vehicle
+- VIN number
+- Owner name(s)
+- Lienholder if any (indicates encumbrance)
+The asset type should be "vehicle". Include make/model/year in description.
+Note: Title doesn't show value - use a reasonable estimate or 0 if unknown.`,
+
+      property_deed: `This is a PROPERTY DEED. Look for:
+- Property address or legal description
+- Owner/grantee names
+- Recording information
+The asset type should be "real-estate". Include address in description.
+Note: Deeds don't show value - use a reasonable estimate or 0 if unknown.`,
+
+      mortgage: `This is a MORTGAGE DOCUMENT. For asset extraction, look for:
+- Property address
+- Property value or appraised value if mentioned
+- Owner information
+The asset type should be "real-estate" if property info is present.`,
+    };
+
+    const specificInstructions = typeSpecificInstructions[documentType] ||
+      `This is a ${documentType} document. Extract all asset information you can find.`;
+
+    return `You are a bankruptcy paralegal assistant extracting asset information for bankruptcy filing.
+
+${specificInstructions}
 
 Return a JSON object with this exact structure:
 {
@@ -575,20 +683,19 @@ Return a JSON object with this exact structure:
       "assetType": "real-estate" | "vehicle" | "bank-account" | "investment" | "retirement" | "personal-property" | "other",
       "description": "<string>",
       "estimatedValue": <number>,
-      "ownershipPercentage": <number 0-100>,
+      "ownershipPercentage": <number 0-100, default 100>,
       "isExempt": <boolean or null>,
-      "encumbrances": <number (liens/loans against asset)>,
+      "encumbrances": <number, default 0>,
       "confidence": <0-1 score>
     }
   ]
 }
 
-Important rules:
-- Bank accounts show balance as value
-- Vehicles should include make, model, year in description
-- Real estate should include address in description
-- Ownership percentage is usually 100 for single filers, 50 for joint
-- Encumbrances are loans secured by the asset
+IMPORTANT:
+- For bank accounts, use the ENDING or CURRENT balance as estimatedValue
+- For vehicles, include year/make/model in description
+- For real estate, include the property address in description
+- Set confidence to 0.9+ for clearly visible values
 - Include ONLY the JSON object in your response`;
   }
 

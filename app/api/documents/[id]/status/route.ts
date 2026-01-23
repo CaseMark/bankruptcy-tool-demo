@@ -2,6 +2,7 @@ import { NextRequest } from "next/server";
 import postgres from "postgres";
 import { CaseDevClient } from "@/lib/case-dev/client";
 import { FinancialDataExtractor, type ExtractedMonthlyIncome } from "@/lib/extraction/financial-extractor";
+import { getValidationPrompt, parseValidationResponse } from "@/lib/extraction/document-validator";
 
 /**
  * Server-Sent Events endpoint for real-time document processing status
@@ -86,14 +87,14 @@ export async function GET(
 
         // Send initial status
         if (reprocess) {
-          sendStatus("processing", "Re-processing document for data extraction...", 10);
+          sendStatus("extracting", "AI extraction in progress...", 30);
         } else {
-          sendStatus("processing", "Starting document processing...", 10);
+          sendStatus("extracting", "AI extraction in progress...", 20);
         }
 
         // If reprocessing with existing OCR text, skip OCR and go directly to extraction
         if (reprocess && doc.ocrText && doc.ocrText.length > 50 && client) {
-          sendStatus("extracting", "Re-extracting financial data...", 60);
+          sendStatus("extracting", "AI extraction in progress...", 40);
 
           const ocrText = doc.ocrText;
           let validationStatus = doc.validationStatus || "valid";
@@ -103,7 +104,7 @@ export async function GET(
           const incomeDocumentTypes = ['paystub', 'w2', 'tax_return', '1099'];
           const debtDocumentTypes = ['credit_card', 'loan_statement', 'medical_bill', 'collection_notice', 'mortgage'];
           const assetDocumentTypes = ['vehicle_title', 'property_deed', 'bank_statement', 'mortgage'];
-          const expenseDocumentTypes = ['utility', 'lease', 'mortgage'];
+          const expenseDocumentTypes = ['utility', 'lease', 'mortgage', 'insurance'];
 
           const isIncomeDocument = incomeDocumentTypes.includes(doc.documentType);
           const isDebtDocument = debtDocumentTypes.includes(doc.documentType);
@@ -121,7 +122,7 @@ export async function GET(
 
           // Extract income
           if (isIncomeDocument) {
-            sendStatus("extracting", "Extracting income data...", 70);
+            sendStatus("extracting", "AI extraction in progress...", 50);
             try {
               const extractionResult = await extractor.extractMonthlyIncome(ocrText, doc.documentType, documentId);
               extractionWarnings = extractionResult.warnings;
@@ -161,7 +162,7 @@ export async function GET(
 
           // Extract debts
           if (isDebtDocument) {
-            sendStatus("extracting", "Extracting debt data...", 80);
+            sendStatus("extracting", "AI extraction in progress...", 60);
             try {
               const debts = await extractor.extractDebts(ocrText, doc.documentType);
               for (const debt of debts) {
@@ -180,7 +181,7 @@ export async function GET(
 
           // Extract assets
           if (isAssetDocument) {
-            sendStatus("extracting", "Extracting asset data...", 90);
+            sendStatus("extracting", "AI extraction in progress...", 70);
             try {
               const assets = await extractor.extractAssets(ocrText, doc.documentType);
               for (const asset of assets) {
@@ -199,7 +200,7 @@ export async function GET(
 
           // Extract expenses
           if (isExpenseDocument) {
-            sendStatus("extracting", "Extracting expense data...", 95);
+            sendStatus("extracting", "AI extraction in progress...", 80);
             try {
               const expenses = await extractor.extractExpenses(ocrText);
               const expenseCategories = [
@@ -246,7 +247,7 @@ export async function GET(
           const [vaultId, objectId] = doc.vaultFileId.split(':');
 
           if (vaultId && objectId) {
-            sendStatus("processing", "Extracting text from document...", 30);
+            sendStatus("extracting", "AI extraction in progress...", 30);
 
             // Poll for OCR completion
             const maxAttempts = 12; // 60 seconds max
@@ -264,7 +265,7 @@ export async function GET(
                 const ocrText = ocrResult.text || "";
 
                 // OCR completed successfully
-                sendStatus("validating", "Text extracted, validating document...", 60);
+                sendStatus("extracting", "AI extraction in progress...", 50);
 
                 // Update database with OCR text
                 await sql`
@@ -279,39 +280,35 @@ export async function GET(
                 let validationNotes = "";
 
                 if (ocrText && ocrText.length > 50) {
-                  sendStatus("validating", "Running AI validation...", 80);
+                  sendStatus("extracting", "AI extraction in progress...", 60);
 
                   try {
+                    // Use document-type-specific validation prompt
+                    const validationPrompt = getValidationPrompt(doc.documentType);
+
                     const validation = await client.llmComplete({
                       model: "gpt-4o-mini",
                       messages: [
                         {
                           role: "system",
-                          content: `You are a bankruptcy paralegal validating client documents.
-Check if this document is a valid ${doc.documentType}.
-Verify: 1) Legibility, 2) Completeness, 3) Dates (not expired), 4) Required information is present.
-
-You MUST respond with ONLY a JSON object in this exact format, no other text:
-{ "valid": true or false, "issues": ["issue1", "issue2"], "confidence": 0.0 to 1.0 }`,
+                          content: validationPrompt,
                         },
                         {
                           role: "user",
-                          content: `Document type: ${doc.documentType}\n\nOCR Text (first 2000 chars):\n${ocrText.substring(0, 2000)}`,
+                          content: `Validate this ${doc.documentType} document:\n\n${ocrText.substring(0, 3000)}`,
                         },
                       ],
                       temperature: 0.1,
                     });
 
-                    // Safely extract content from response
+                    // Safely extract and parse validation response
                     const content = validation?.choices?.[0]?.message?.content;
-                    if (content) {
-                      const validationResult = JSON.parse(content);
-                      validationStatus = validationResult.valid ? "valid" : "needs_review";
-                      validationNotes = validationResult.issues?.join("; ") || "";
-                    } else {
-                      console.warn("LLM validation returned unexpected response structure:", JSON.stringify(validation));
-                      validationStatus = "valid"; // Default to valid if response is malformed
-                    }
+                    const validationResult = parseValidationResponse(content);
+
+                    validationStatus = validationResult.valid ? "valid" : "needs_review";
+                    validationNotes = validationResult.issues?.join("; ") || "";
+
+                    console.log(`Document ${documentId} validation: ${validationStatus} (confidence: ${validationResult.confidence})`);
                   } catch (llmError) {
                     console.error("LLM validation error:", llmError);
                     validationStatus = "valid"; // Default to valid if LLM fails
@@ -322,7 +319,7 @@ You MUST respond with ONLY a JSON object in this exact format, no other text:
                 const incomeDocumentTypes = ['paystub', 'w2', 'tax_return', '1099'];
                 const debtDocumentTypes = ['credit_card', 'loan_statement', 'medical_bill', 'collection_notice', 'mortgage'];
                 const assetDocumentTypes = ['vehicle_title', 'property_deed', 'bank_statement', 'mortgage'];
-                const expenseDocumentTypes = ['utility', 'lease', 'mortgage'];
+                const expenseDocumentTypes = ['utility', 'lease', 'mortgage', 'insurance'];
 
                 const isIncomeDocument = incomeDocumentTypes.includes(doc.documentType);
                 const isDebtDocument = debtDocumentTypes.includes(doc.documentType);
@@ -337,7 +334,7 @@ You MUST respond with ONLY a JSON object in this exact format, no other text:
 
                 // Extract income data if this is an income document
                 if (isIncomeDocument && ocrText && ocrText.length > 50) {
-                  sendStatus("extracting", "Extracting income data for means test...", 85);
+                  sendStatus("extracting", "AI extraction in progress...", 70);
 
                   try {
                     const extractor = new FinancialDataExtractor(client);
@@ -448,7 +445,7 @@ You MUST respond with ONLY a JSON object in this exact format, no other text:
 
                 // Extract debt data if this is a debt document
                 if (isDebtDocument && ocrText && ocrText.length > 50) {
-                  sendStatus("extracting", "Extracting debt information...", 87);
+                  sendStatus("extracting", "AI extraction in progress...", 75);
 
                   try {
                     const extractor = new FinancialDataExtractor(client);
@@ -541,7 +538,7 @@ You MUST respond with ONLY a JSON object in this exact format, no other text:
 
                 // Extract asset data if this is an asset document
                 if (isAssetDocument && ocrText && ocrText.length > 50) {
-                  sendStatus("extracting", "Extracting asset information...", 90);
+                  sendStatus("extracting", "AI extraction in progress...", 80);
 
                   try {
                     const extractor = new FinancialDataExtractor(client);
@@ -627,7 +624,7 @@ You MUST respond with ONLY a JSON object in this exact format, no other text:
 
                 // Extract expense data if this is an expense document
                 if (isExpenseDocument && ocrText && ocrText.length > 50) {
-                  sendStatus("extracting", "Extracting expense information...", 93);
+                  sendStatus("extracting", "AI extraction in progress...", 85);
 
                   try {
                     const extractor = new FinancialDataExtractor(client);
@@ -750,12 +747,7 @@ You MUST respond with ONLY a JSON object in this exact format, no other text:
                   ocrError.message?.includes("not been processed");
 
                 if (isStillProcessing && attempt < maxAttempts) {
-                  const progress = 30 + Math.floor((attempt / maxAttempts) * 30);
-                  sendStatus(
-                    "processing",
-                    `Extracting text... (attempt ${attempt}/${maxAttempts})`,
-                    progress
-                  );
+                  // Don't send status updates for each retry - keep UI clean
                   continue;
                 } else if (!isStillProcessing) {
                   throw ocrError;
