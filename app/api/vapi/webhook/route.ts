@@ -30,7 +30,7 @@ interface VapiFunctionCall {
   toolCalls?: Array<{
     function: {
       name: string;
-      arguments: string;
+      arguments: string | Record<string, unknown>; // Can be JSON string or already-parsed object
     };
   }>;
 }
@@ -95,7 +95,13 @@ export async function POST(request: NextRequest) {
       // New format: tool-calls with array of tools
       const toolCall = body.message.toolCalls[0];
       name = toolCall.function.name;
-      parameters = JSON.parse(toolCall.function.arguments);
+
+      // Arguments can be either a JSON string or already-parsed object
+      if (typeof toolCall.function.arguments === 'string') {
+        parameters = JSON.parse(toolCall.function.arguments);
+      } else {
+        parameters = toolCall.function.arguments as Record<string, unknown>;
+      }
     } else if (messageType === 'function-call' && body.message.functionCall) {
       // Old format: function-call with single functionCall
       name = body.message.functionCall.name;
