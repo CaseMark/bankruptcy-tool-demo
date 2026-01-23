@@ -112,7 +112,7 @@ function isBankruptcyRoute(pathname: string): boolean {
   return matchesRoute(pathname, bankruptcyRoutes);
 }
 
-export async function middleware(request: NextRequest) {
+export async function proxy(request: NextRequest) {
   const { pathname } = request.nextUrl;
 
   // Always allow certain routes regardless of auth mode

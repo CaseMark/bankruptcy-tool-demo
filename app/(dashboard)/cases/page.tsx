@@ -23,7 +23,6 @@ import {
 import Link from 'next/link';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
-import { Alert, AlertDescription } from '@/components/ui/alert';
 import { formatForDisplay } from '@/lib/utils/phone-validation';
 import {
   AlertDialog,
@@ -94,13 +93,20 @@ const P0_FEATURES: Record<string, FeatureConfig> = {
   },
 };
 
+interface BankruptcyCase {
+  id: string;
+  clientName: string;
+  caseType: string;
+  filingType: string;
+  status: string;
+  createdAt: string;
+}
+
 export default function CasesPage() {
   const router = useRouter();
   const [loading, setLoading] = useState(true);
   const [initializingDb, setInitializingDb] = useState(false);
-  const [dbError, setDbError] = useState<string | null>(null);
-  const [dbReady, setDbReady] = useState(false);
-  const [cases, setCases] = useState<any[]>([]);
+  const [cases, setCases] = useState<BankruptcyCase[]>([]);
   const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
   const [caseToDelete, setCaseToDelete] = useState<{ id: string; clientName: string } | null>(null);
   const [deleting, setDeleting] = useState(false);
@@ -187,16 +193,13 @@ export default function CasesPage() {
         initializeDatabase(apiKey)
           .then(() => {
             console.log('Database initialized successfully');
-            setDbReady(true);
             loadCases();
           })
           .catch((error) => {
             console.warn('Database initialization skipped:', error.message);
-            setDbReady(false);
             setLoading(false);
           });
       } else {
-        setDbReady(true);
         loadCases();
       }
     }

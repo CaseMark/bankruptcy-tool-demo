@@ -48,11 +48,17 @@ interface MeansTestResponse {
   result: MeansTestResult;
 }
 
+interface IncomeRecord {
+  income_month: string;
+  income_source: string;
+  gross_amount: number | string;
+}
+
 /**
  * Calculate Current Monthly Income (CMI) from income records
  * Per Form B 122A-2: CMI = Total income for 6 months / 6
  */
-function calculateCMI(incomeRecords: any[]): CMIDetails {
+function calculateCMI(incomeRecords: IncomeRecord[]): CMIDetails {
   const monthlyTotals = new Map<string, MonthlyIncomeSummary>();
 
   for (const record of incomeRecords) {
@@ -157,7 +163,7 @@ export async function GET(
     `;
 
     // Calculate 6-month CMI per Form B 122A-2
-    const cmiDetails = calculateCMI(incomeRecords);
+    const cmiDetails = calculateCMI(incomeRecords as unknown as IncomeRecord[]);
     const currentMonthlyIncome = cmiDetails.currentMonthlyIncome;
 
     const monthlyExpenses = expenseRecords.reduce(
@@ -288,7 +294,7 @@ export async function POST(
     `;
 
     // Calculate 6-month CMI per Form B 122A-2
-    const cmiDetails = calculateCMI(incomeRecords);
+    const cmiDetails = calculateCMI(incomeRecords as unknown as IncomeRecord[]);
     const currentMonthlyIncome = cmiDetails.currentMonthlyIncome;
 
     const monthlyExpenses = expenseRecords.reduce(

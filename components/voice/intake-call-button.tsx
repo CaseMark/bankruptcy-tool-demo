@@ -6,6 +6,7 @@ import { Button } from "@/components/ui/button";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Input } from "@/components/ui/input";
 import { useVapi } from "@/app/hooks/useVapi";
+import { useSession } from "@/lib/auth/client";
 
 interface IntakeCallButtonProps {
   className?: string;
@@ -15,6 +16,7 @@ export function IntakeCallButton({ className }: IntakeCallButtonProps) {
   const [isOpen, setIsOpen] = useState(false);
   const [connectionString, setConnectionString] = useState<string | null>(null);
   const [textInput, setTextInput] = useState("");
+  const { data: session } = useSession();
 
   const {
     startCall,
@@ -45,10 +47,11 @@ export function IntakeCallButton({ className }: IntakeCallButtonProps) {
   const handleStartCall = async () => {
     clearError();
 
-    // Pass connection string as metadata so webhook can access the database
+    // Pass connection string and userId as metadata so webhook can access the database
     await startCall({
       metadata: {
         connectionString: connectionString,
+        userId: session?.user?.id || null,
       },
     });
   };
