@@ -71,6 +71,31 @@ export function AddIncomeModal({ open, onOpenChange, caseId, onSuccess }: AddInc
     setLoading(true);
     setError(null);
 
+    // Validate required fields
+    if (!formData.incomeSource) {
+      setError('Please select an income source.');
+      setLoading(false);
+      return;
+    }
+
+    if (!formData.payPeriod) {
+      setError('Please select a pay period.');
+      setLoading(false);
+      return;
+    }
+
+    if (!formData.employer) {
+      setError('Please enter an employer or source name.');
+      setLoading(false);
+      return;
+    }
+
+    if (!formData.grossPay) {
+      setError('Please enter a gross pay amount.');
+      setLoading(false);
+      return;
+    }
+
     const connectionString = localStorage.getItem('bankruptcy_db_connection');
 
     if (!connectionString) {
