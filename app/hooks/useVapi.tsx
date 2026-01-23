@@ -10,7 +10,7 @@ interface VapiConfig {
 }
 
 interface TranscriptMessage {
-  role: 'user' | 'assistant';
+  role: 'user' | 'assistant' | 'system';
   text: string;
   timestamp: Date;
   isFinal: boolean;
@@ -111,6 +111,53 @@ export const useVapi = (config: VapiConfig) => {
             ...prev,
             [functionData.functionCall.name]: functionData.functionCall.parameters,
           }));
+
+          // Add system message to transcripts for visual feedback
+          let systemMessage = '';
+          const functionName = functionData.functionCall.name;
+          const params = functionData.functionCall.parameters;
+
+          switch (functionName) {
+            case 'check_existing_case':
+              systemMessage = 'Searched for existing cases.';
+              break;
+            case 'create_new_case':
+              const firstName = params.first_name as string || '';
+              const lastName = params.last_name as string || '';
+              const fullName = `${firstName} ${lastName}`.trim();
+              systemMessage = fullName
+                ? `Created a new case for ${fullName}.`
+                : 'Created a new case.';
+              break;
+            case 'update_case_intake':
+              systemMessage = 'Updated case information.';
+              break;
+            case 'verify_client':
+              systemMessage = 'Verifying client information.';
+              break;
+            case 'get_case_documents':
+              systemMessage = 'Retrieving case documents.';
+              break;
+            case 'get_required_documents':
+              systemMessage = 'Checking required documents.';
+              break;
+            default:
+              systemMessage = `Processing: ${functionName}`;
+          }
+
+          if (systemMessage) {
+            const systemTranscript: TranscriptMessage = {
+              role: 'system',
+              text: systemMessage,
+              timestamp: new Date(),
+              isFinal: true,
+            };
+
+            setState(prev => ({
+              ...prev,
+              transcripts: [...prev.transcripts, systemTranscript],
+            }));
+          }
         }
       }
 

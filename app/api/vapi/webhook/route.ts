@@ -22,11 +22,17 @@ import postgres from 'postgres';
  */
 
 interface VapiFunctionCall {
-  type: 'function-call';
-  functionCall: {
+  type: 'function-call' | 'tool-calls';
+  functionCall?: {
     name: string;
     parameters: Record<string, unknown>;
   };
+  toolCalls?: Array<{
+    function: {
+      name: string;
+      arguments: string;
+    };
+  }>;
 }
 
 interface VapiRequest {
@@ -74,13 +80,36 @@ export async function POST(request: NextRequest) {
       hasMetadata: !!body.call?.metadata,
     });
 
-    // Only process function calls, ignore other message types (status, transcripts, etc.)
-    if (body.message?.type !== 'function-call') {
-      console.log('[VAPI Webhook] Ignoring non-function-call message:', body.message?.type);
+    // Handle both function-call and tool-calls message types
+    const messageType = body.message?.type;
+    if (messageType !== 'function-call' && messageType !== 'tool-calls') {
+      console.log('[VAPI Webhook] Ignoring non-function-call message:', messageType);
       return NextResponse.json({ success: true, message: 'Message received' }, { status: 200 });
     }
 
-    const { name, parameters } = body.message.functionCall;
+    // Extract function name and parameters from either format
+    let name: string;
+    let parameters: Record<string, unknown>;
+
+    if (messageType === 'tool-calls' && body.message.toolCalls && body.message.toolCalls.length > 0) {
+      // New format: tool-calls with array of tools
+      const toolCall = body.message.toolCalls[0];
+      name = toolCall.function.name;
+      parameters = JSON.parse(toolCall.function.arguments);
+    } else if (messageType === 'function-call' && body.message.functionCall) {
+      // Old format: function-call with single functionCall
+      name = body.message.functionCall.name;
+      parameters = body.message.functionCall.parameters;
+    } else {
+      console.error('[VAPI Webhook] Invalid message format');
+      return NextResponse.json({
+        result: JSON.stringify({
+          success: false,
+          error: 'Invalid function call format',
+        }),
+      });
+    }
+
     const connectionString = getConnectionString(body.call?.metadata);
     const userId = getUserId(body.call?.metadata);
 
