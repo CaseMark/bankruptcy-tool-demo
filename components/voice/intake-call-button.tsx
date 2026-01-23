@@ -111,7 +111,7 @@ export function IntakeCallButton({ className }: IntakeCallButtonProps) {
         ) : (
           <Phone className="w-4 h-4 mr-2" />
         )}
-        {isSessionActive ? "Call Active" : "Call for Intake"}
+        {isSessionActive ? "Call Active" : "Test Intake"}
       </Button>
 
       {/* Call Modal */}

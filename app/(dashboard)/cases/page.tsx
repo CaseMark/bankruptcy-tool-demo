@@ -37,6 +37,7 @@ import {
 import { initializeDatabase, hasDatabase } from '@/lib/database/provision';
 import { CaseSelectorModal } from '@/components/cases/case-selector-modal';
 import { IntakeCallButton } from '@/components/voice/intake-call-button';
+import { OutboundIntakeModal } from '@/components/voice/outbound-intake-modal';
 
 // Feature configuration type
 interface FeatureConfig {
@@ -164,6 +165,7 @@ export default function CasesPage() {
   const [selectedFeature, setSelectedFeature] = useState<FeatureConfig | null>(null);
   const [modalOpen, setModalOpen] = useState(false);
   const [apiKeyDialogOpen, setApiKeyDialogOpen] = useState(false);
+  const [outboundIntakeModalOpen, setOutboundIntakeModalOpen] = useState(false);
 
   const handleFeatureClick = (featureId: string) => {
     const feature = P0_FEATURES[featureId];
@@ -262,6 +264,10 @@ export default function CasesPage() {
               <p className="text-sm text-muted-foreground mt-1">Manage your Chapter 7 and Chapter 13 cases</p>
             </div>
             <div className="flex items-center gap-3">
+              <Button onClick={() => setOutboundIntakeModalOpen(true)}>
+                <Phone className="w-4 h-4 mr-2" />
+                Call for Intake
+              </Button>
               <IntakeCallButton />
               <Button variant="outline" onClick={() => setApiKeyDialogOpen(true)}>
                 <Key className="w-4 h-4 mr-2" />
@@ -664,6 +670,16 @@ export default function CasesPage() {
         onClose={closeModal}
         cases={cases}
         feature={selectedFeature}
+      />
+
+      {/* Outbound Intake Modal */}
+      <OutboundIntakeModal
+        open={outboundIntakeModalOpen}
+        onOpenChange={setOutboundIntakeModalOpen}
+        onCallScheduled={() => {
+          // Refresh page to show new case
+          window.location.reload();
+        }}
       />
     </div>
   );
