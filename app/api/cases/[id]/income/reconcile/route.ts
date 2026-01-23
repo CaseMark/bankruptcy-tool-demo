@@ -308,11 +308,16 @@ export async function POST(
                 },
               ],
               temperature: 0.1,
-              response_format: { type: 'json_object' },
             });
 
             const content = response.choices[0].message.content;
-            const extracted = JSON.parse(content);
+            // Parse JSON from response - extract JSON object if wrapped in markdown
+            const jsonMatch = content.match(/\{[\s\S]*\}/);
+            if (!jsonMatch) {
+              console.warn(`No JSON found in extraction response for document ${doc.id}`);
+              continue;
+            }
+            const extracted = JSON.parse(jsonMatch[0]);
 
             if (extracted.incomes && Array.isArray(extracted.incomes)) {
               for (const income of extracted.incomes) {
