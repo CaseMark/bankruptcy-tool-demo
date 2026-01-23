@@ -51,12 +51,17 @@ export function AddDebtModal({ open, onOpenChange, caseId, onSuccess }: AddDebtM
     balance: '',
     monthlyPayment: '',
     interestRate: '',
-    debtType: 'credit_card',
+    debtType: '',
     secured: false,
     priority: false,
     collateral: '',
     collateralValue: '',
   });
+
+  const getDebtTypeLabel = (value: string) => {
+    const found = DEBT_TYPES.find(type => type.value === value);
+    return found ? found.label : 'Choose One...';
+  };
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -100,7 +105,7 @@ export function AddDebtModal({ open, onOpenChange, caseId, onSuccess }: AddDebtM
         balance: '',
         monthlyPayment: '',
         interestRate: '',
-        debtType: 'credit_card',
+        debtType: '',
         secured: false,
         priority: false,
         collateral: '',
@@ -151,9 +156,12 @@ export function AddDebtModal({ open, onOpenChange, caseId, onSuccess }: AddDebtM
                 onValueChange={(value) => setFormData(prev => ({ ...prev, debtType: value || prev.debtType }))}
               >
                 <SelectTrigger>
-                  <SelectValue />
+                  <SelectValue>
+                    {formData.debtType ? getDebtTypeLabel(formData.debtType) : 'Choose One...'}
+                  </SelectValue>
                 </SelectTrigger>
                 <SelectContent className="min-w-[180px]">
+                  <SelectItem value="" disabled>Choose One...</SelectItem>
                   {DEBT_TYPES.map((type) => (
                     <SelectItem key={type.value} value={type.value}>
                       {type.label}

@@ -48,10 +48,15 @@ export function AddExpenseModal({ open, onOpenChange, caseId, onSuccess }: AddEx
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [formData, setFormData] = useState({
-    category: 'housing',
+    category: '',
     description: '',
     monthlyAmount: '',
   });
+
+  const getCategoryLabel = (value: string) => {
+    const found = EXPENSE_CATEGORIES.find(cat => cat.value === value);
+    return found ? found.label : 'Choose One...';
+  };
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -89,7 +94,7 @@ export function AddExpenseModal({ open, onOpenChange, caseId, onSuccess }: AddEx
 
       // Reset form and close
       setFormData({
-        category: 'housing',
+        category: '',
         description: '',
         monthlyAmount: '',
       });
@@ -126,9 +131,12 @@ export function AddExpenseModal({ open, onOpenChange, caseId, onSuccess }: AddEx
               onValueChange={(value) => setFormData(prev => ({ ...prev, category: value || prev.category }))}
             >
               <SelectTrigger>
-                <SelectValue />
+                <SelectValue>
+                  {formData.category ? getCategoryLabel(formData.category) : 'Choose One...'}
+                </SelectValue>
               </SelectTrigger>
               <SelectContent className="min-w-[240px]">
+                <SelectItem value="" disabled>Choose One...</SelectItem>
                 {EXPENSE_CATEGORIES.map((cat) => (
                   <SelectItem key={cat.value} value={cat.value}>
                     {cat.label}

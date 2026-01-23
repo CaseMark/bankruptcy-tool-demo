@@ -51,10 +51,20 @@ export function AddIncomeModal({ open, onOpenChange, caseId, onSuccess }: AddInc
     occupation: '',
     grossPay: '',
     netPay: '',
-    payPeriod: 'monthly',
-    incomeSource: 'employment',
+    payPeriod: '',
+    incomeSource: '',
     ytdGross: '',
   });
+
+  const getIncomeSourceLabel = (value: string) => {
+    const found = INCOME_SOURCES.find(source => source.value === value);
+    return found ? found.label : 'Choose One...';
+  };
+
+  const getPayPeriodLabel = (value: string) => {
+    const found = PAY_PERIODS.find(period => period.value === value);
+    return found ? found.label : 'Choose One...';
+  };
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -90,8 +100,8 @@ export function AddIncomeModal({ open, onOpenChange, caseId, onSuccess }: AddInc
         occupation: '',
         grossPay: '',
         netPay: '',
-        payPeriod: 'monthly',
-        incomeSource: 'employment',
+        payPeriod: '',
+        incomeSource: '',
         ytdGross: '',
       });
       onSuccess();
@@ -128,9 +138,12 @@ export function AddIncomeModal({ open, onOpenChange, caseId, onSuccess }: AddInc
                 onValueChange={(value) => setFormData(prev => ({ ...prev, incomeSource: value || prev.incomeSource }))}
               >
                 <SelectTrigger>
-                  <SelectValue />
+                  <SelectValue>
+                    {formData.incomeSource ? getIncomeSourceLabel(formData.incomeSource) : 'Choose One...'}
+                  </SelectValue>
                 </SelectTrigger>
                 <SelectContent className="min-w-[240px]">
+                  <SelectItem value="" disabled>Choose One...</SelectItem>
                   {INCOME_SOURCES.map((source) => (
                     <SelectItem key={source.value} value={source.value}>
                       {source.label}
@@ -147,9 +160,12 @@ export function AddIncomeModal({ open, onOpenChange, caseId, onSuccess }: AddInc
                 onValueChange={(value) => setFormData(prev => ({ ...prev, payPeriod: value || prev.payPeriod }))}
               >
                 <SelectTrigger>
-                  <SelectValue />
+                  <SelectValue>
+                    {formData.payPeriod ? getPayPeriodLabel(formData.payPeriod) : 'Choose One...'}
+                  </SelectValue>
                 </SelectTrigger>
                 <SelectContent className="min-w-[160px]">
+                  <SelectItem value="" disabled>Choose One...</SelectItem>
                   {PAY_PERIODS.map((period) => (
                     <SelectItem key={period.value} value={period.value}>
                       {period.label}

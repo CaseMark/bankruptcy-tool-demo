@@ -44,7 +44,7 @@ export function AddAssetModal({ open, onOpenChange, caseId, onSuccess }: AddAsse
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [formData, setFormData] = useState({
-    assetType: 'household_goods',
+    assetType: '',
     description: '',
     currentValue: '',
     address: '',
@@ -56,6 +56,11 @@ export function AddAssetModal({ open, onOpenChange, caseId, onSuccess }: AddAsse
     accountNumberLast4: '',
     ownershipPercentage: '100',
   });
+
+  const getAssetTypeLabel = (value: string) => {
+    const found = ASSET_TYPES.find(type => type.value === value);
+    return found ? found.label : 'Choose One...';
+  };
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -93,7 +98,7 @@ export function AddAssetModal({ open, onOpenChange, caseId, onSuccess }: AddAsse
 
       // Reset form and close
       setFormData({
-        assetType: 'household_goods',
+        assetType: '',
         description: '',
         currentValue: '',
         address: '',
@@ -143,9 +148,12 @@ export function AddAssetModal({ open, onOpenChange, caseId, onSuccess }: AddAsse
                 onValueChange={(value) => setFormData(prev => ({ ...prev, assetType: value || prev.assetType }))}
               >
                 <SelectTrigger>
-                  <SelectValue />
+                  <SelectValue>
+                    {formData.assetType ? getAssetTypeLabel(formData.assetType) : 'Choose One...'}
+                  </SelectValue>
                 </SelectTrigger>
                 <SelectContent className="min-w-[200px]">
+                  <SelectItem value="" disabled>Choose One...</SelectItem>
                   {ASSET_TYPES.map((type) => (
                     <SelectItem key={type.value} value={type.value}>
                       {type.label}
