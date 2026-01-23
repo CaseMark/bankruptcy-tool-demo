@@ -1,8 +1,9 @@
 "use client";
 
 import { useState, useEffect } from "react";
-import { Phone, PhoneOff, Mic, MicOff, Loader2, X } from "lucide-react";
+import { Phone, PhoneOff, Mic, MicOff, Loader2, X, Info } from "lucide-react";
 import { Button } from "@/components/ui/button";
+import { Alert, AlertDescription } from "@/components/ui/alert";
 import { useVapi } from "@/app/hooks/useVapi";
 
 interface IntakeCallButtonProps {
@@ -33,8 +34,12 @@ export function IntakeCallButton({ className }: IntakeCallButtonProps) {
     setConnectionString(stored);
   }, []);
 
-  const handleStartCall = async () => {
+  const handleOpenModal = () => {
     setIsOpen(true);
+    clearError();
+  };
+
+  const handleStartCall = async () => {
     clearError();
 
     // Pass connection string as metadata so webhook can access the database
@@ -63,7 +68,7 @@ export function IntakeCallButton({ className }: IntakeCallButtonProps) {
     <>
       {/* Call Button */}
       <Button
-        onClick={handleStartCall}
+        onClick={handleOpenModal}
         disabled={isLoading || isSessionActive}
         variant="outline"
         className={className}
@@ -81,7 +86,7 @@ export function IntakeCallButton({ className }: IntakeCallButtonProps) {
       {/* Call Modal */}
       {isOpen && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50">
-          <div className="bg-background rounded-xl shadow-2xl w-full max-w-md mx-4 overflow-hidden">
+          <div className="bg-background rounded-xl shadow-2xl w-full max-w-lg mx-4 overflow-hidden">
             {/* Header */}
             <div className="bg-primary p-4 flex items-center justify-between">
               <div className="flex items-center gap-3">
@@ -97,7 +102,7 @@ export function IntakeCallButton({ className }: IntakeCallButtonProps) {
                   )}
                 </div>
                 <div>
-                  <h3 className="text-white font-semibold">Client Intake</h3>
+                  <h3 className="text-white font-semibold text-xl">Client Intake</h3>
                   <p className="text-white/70 text-sm">
                     {isLoading
                       ? "Connecting..."
@@ -127,75 +132,82 @@ export function IntakeCallButton({ className }: IntakeCallButtonProps) {
               </div>
             )}
 
-            {/* Transcript */}
-            <div className="h-64 overflow-y-auto p-4 space-y-3">
-              {finalTranscripts.length === 0 && !error && (
-                <div className="text-center text-muted-foreground py-8">
-                  {isLoading ? (
-                    <div className="flex flex-col items-center gap-2">
-                      <Loader2 className="w-8 h-8 animate-spin" />
-                      <p>Connecting to assistant...</p>
-                    </div>
-                  ) : isSessionActive ? (
-                    <p>Waiting for conversation to begin...</p>
-                  ) : (
-                    <p>Click the button below to start the intake call</p>
-                  )}
-                </div>
-              )}
-
-              {error && (
-                <div className="bg-red-50 border border-red-200 rounded-lg p-3 text-red-700 text-sm">
-                  {error}
-                </div>
-              )}
-
-              {finalTranscripts.map((transcript, index) => (
-                <div
-                  key={index}
-                  className={`flex ${
-                    transcript.role === "user" ? "justify-end" : "justify-start"
-                  }`}
-                >
-                  <div
-                    className={`max-w-[80%] rounded-lg px-3 py-2 text-sm ${
-                      transcript.role === "user"
-                        ? "bg-primary text-white"
-                        : "bg-muted text-foreground"
-                    }`}
-                  >
-                    {transcript.text}
-                  </div>
-                </div>
-              ))}
-            </div>
-
-            {/* Actions */}
-            <div className="p-4 border-t bg-muted/30">
-              {isSessionActive ? (
-                <Button
-                  onClick={handleEndCall}
-                  variant="destructive"
-                  className="w-full"
-                >
-                  <PhoneOff className="w-4 h-4 mr-2" />
-                  End Call
-                </Button>
-              ) : (
+            {/* Content Area */}
+            {!isSessionActive && !isLoading ? (
+              /* Start Call button with info text */
+              <div className="p-8 flex flex-col items-center justify-center gap-6">
                 <Button
                   onClick={handleStartCall}
                   disabled={isLoading}
-                  className="w-full"
+                  className="w-full h-48 text-2xl font-semibold flex items-center justify-center gap-3 hover:bg-primary/90 rounded-xl"
+                  size="lg"
                 >
-                  {isLoading ? (
-                    <Loader2 className="w-4 h-4 mr-2 animate-spin" />
-                  ) : (
-                    <Phone className="w-4 h-4 mr-2" />
-                  )}
-                  {isLoading ? "Connecting..." : "Start Call"}
+                  <Phone className="w-8 h-8" />
+                  Start call
                 </Button>
-              )}
-            </div>
+                <Alert className="border-blue-200 bg-blue-50">
+                  <Info className="h-4 w-4 text-blue-600" />
+                  <AlertDescription className="text-sm text-blue-900">
+                    When you click Start, our agent will call you to assist you through the intake process.
+                  </AlertDescription>
+                </Alert>
+              </div>
+            ) : (
+              <>
+                {/* Transcript during call */}
+                <div className="h-64 overflow-y-auto p-4 space-y-3">
+                  {finalTranscripts.length === 0 && !error && (
+                    <div className="text-center text-muted-foreground py-8">
+                      {isLoading ? (
+                        <div className="flex flex-col items-center gap-2">
+                          <Loader2 className="w-8 h-8 animate-spin" />
+                          <p>Connecting to assistant...</p>
+                        </div>
+                      ) : (
+                        <p>Waiting for conversation to begin...</p>
+                      )}
+                    </div>
+                  )}
+
+                  {error && (
+                    <div className="bg-red-50 border border-red-200 rounded-lg p-3 text-red-700 text-sm">
+                      {error}
+                    </div>
+                  )}
+
+                  {finalTranscripts.map((transcript, index) => (
+                    <div
+                      key={index}
+                      className={`flex ${
+                        transcript.role === "user" ? "justify-end" : "justify-start"
+                      }`}
+                    >
+                      <div
+                        className={`max-w-[80%] rounded-lg px-3 py-2 text-sm ${
+                          transcript.role === "user"
+                            ? "bg-primary text-white"
+                            : "bg-muted text-foreground"
+                        }`}
+                      >
+                        {transcript.text}
+                      </div>
+                    </div>
+                  ))}
+                </div>
+
+                {/* End Call button during active call */}
+                <div className="p-4 border-t bg-muted/30">
+                  <Button
+                    onClick={handleEndCall}
+                    variant="destructive"
+                    className="w-full"
+                  >
+                    <PhoneOff className="w-4 h-4 mr-2" />
+                    End Call
+                  </Button>
+                </div>
+              </>
+            )}
           </div>
         </div>
       )}
