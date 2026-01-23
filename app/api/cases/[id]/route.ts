@@ -81,23 +81,40 @@ export async function PUT(
     const sql = postgres(connectionString);
 
     try {
+      // Convert undefined values to null (postgres.js doesn't accept undefined)
+      const updates = {
+        clientName: body.clientName ?? null,
+        clientEmail: body.clientEmail ?? null,
+        clientPhone: body.clientPhone ?? null,
+        ssnLast4: body.ssnLast4 ?? null,
+        address: body.address ?? null,
+        city: body.city ?? null,
+        state: body.state ?? null,
+        zip: body.zip ?? null,
+        county: body.county ?? null,
+        caseType: body.caseType ?? null,
+        filingType: body.filingType ?? null,
+        householdSize: body.householdSize ?? null,
+        status: body.status ?? null,
+      };
+
       // Update case
       const result = await sql`
         UPDATE bankruptcy_cases
         SET
-          client_name = COALESCE(${body.clientName}, client_name),
-          client_email = COALESCE(${body.clientEmail}, client_email),
-          client_phone = COALESCE(${body.clientPhone}, client_phone),
-          ssn_last4 = COALESCE(${body.ssnLast4}, ssn_last4),
-          address = COALESCE(${body.address}, address),
-          city = COALESCE(${body.city}, city),
-          state = COALESCE(${body.state}, state),
-          zip = COALESCE(${body.zip}, zip),
-          county = COALESCE(${body.county}, county),
-          case_type = COALESCE(${body.caseType}, case_type),
-          filing_type = COALESCE(${body.filingType}, filing_type),
-          household_size = COALESCE(${body.householdSize}, household_size),
-          status = COALESCE(${body.status}, status),
+          client_name = COALESCE(${updates.clientName}, client_name),
+          client_email = COALESCE(${updates.clientEmail}, client_email),
+          client_phone = COALESCE(${updates.clientPhone}, client_phone),
+          ssn_last4 = COALESCE(${updates.ssnLast4}, ssn_last4),
+          address = COALESCE(${updates.address}, address),
+          city = COALESCE(${updates.city}, city),
+          state = COALESCE(${updates.state}, state),
+          zip = COALESCE(${updates.zip}, zip),
+          county = COALESCE(${updates.county}, county),
+          case_type = COALESCE(${updates.caseType}, case_type),
+          filing_type = COALESCE(${updates.filingType}, filing_type),
+          household_size = COALESCE(${updates.householdSize}, household_size),
+          status = COALESCE(${updates.status}, status),
           updated_at = NOW()
         WHERE id = ${id}
         RETURNING

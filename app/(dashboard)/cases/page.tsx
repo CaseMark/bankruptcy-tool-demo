@@ -18,7 +18,8 @@ import {
   Users,
   Shield,
   Trash2,
-  Phone
+  Phone,
+  CheckCircle2
 } from 'lucide-react';
 import Link from 'next/link';
 import { Button } from '@/components/ui/button';
@@ -37,6 +38,7 @@ import {
 import { initializeDatabase, hasDatabase } from '@/lib/database/provision';
 import { CaseSelectorModal } from '@/components/cases/case-selector-modal';
 import { IntakeCallButton } from '@/components/voice/intake-call-button';
+import { OutboundIntakeModal } from '@/components/voice/outbound-intake-modal';
 
 // Feature configuration type
 interface FeatureConfig {
@@ -111,6 +113,7 @@ export default function CasesPage() {
   const [caseToDelete, setCaseToDelete] = useState<{ id: string; clientName: string } | null>(null);
   const [deleting, setDeleting] = useState(false);
   const [phoneCopied, setPhoneCopied] = useState(false);
+  const [callScheduled, setCallScheduled] = useState(false);
 
   const handleCopyPhone = async () => {
     const phoneNumber = process.env.NEXT_PUBLIC_VAPI_PHONE_NUMBER || '16282440385';
@@ -164,6 +167,7 @@ export default function CasesPage() {
   const [selectedFeature, setSelectedFeature] = useState<FeatureConfig | null>(null);
   const [modalOpen, setModalOpen] = useState(false);
   const [apiKeyDialogOpen, setApiKeyDialogOpen] = useState(false);
+  const [outboundIntakeModalOpen, setOutboundIntakeModalOpen] = useState(false);
 
   const handleFeatureClick = (featureId: string) => {
     const feature = P0_FEATURES[featureId];
@@ -262,6 +266,10 @@ export default function CasesPage() {
               <p className="text-sm text-muted-foreground mt-1">Manage your Chapter 7 and Chapter 13 cases</p>
             </div>
             <div className="flex items-center gap-3">
+              <Button onClick={() => setOutboundIntakeModalOpen(true)}>
+                <Phone className="w-4 h-4 mr-2" />
+                Call for Intake
+              </Button>
               <IntakeCallButton />
               <Button variant="outline" onClick={() => setApiKeyDialogOpen(true)}>
                 <Key className="w-4 h-4 mr-2" />
@@ -665,6 +673,28 @@ export default function CasesPage() {
         cases={cases}
         feature={selectedFeature}
       />
+
+      {/* Outbound Intake Modal */}
+      <OutboundIntakeModal
+        open={outboundIntakeModalOpen}
+        onOpenChange={setOutboundIntakeModalOpen}
+        onCallScheduled={() => {
+          // Show success notification
+          setCallScheduled(true);
+          setTimeout(() => setCallScheduled(false), 3000);
+
+          // Refresh page to show new case
+          window.location.reload();
+        }}
+      />
+
+      {/* Call Scheduled Notification */}
+      {callScheduled && (
+        <div className="fixed top-4 left-1/2 -translate-x-1/2 z-50 bg-green-600 text-white px-6 py-3 rounded-lg shadow-xl flex items-center gap-2 animate-in fade-in slide-in-from-top-2 duration-300">
+          <CheckCircle2 className="w-5 h-5" />
+          <span className="font-medium">Call scheduled</span>
+        </div>
+      )}
     </div>
   );
 }

@@ -53,11 +53,14 @@ export function IntakeCallButton({ className }: IntakeCallButtonProps) {
   const handleStartCall = async () => {
     clearError();
 
-    // Pass connection string and userId as metadata so webhook can access the database
-    // userId works regardless of whether Better Auth is enabled or disabled
-    // Note: The parameter passed to startCall IS the assistantOverrides object
+    // Pass connection string and userId as both metadata AND variableValues
+    // Web SDK might not forward metadata to webhooks, so we try both approaches
     await startCall({
       metadata: {
+        connectionString: connectionString,
+        userId: currentUserId,
+      },
+      variableValues: {
         connectionString: connectionString,
         userId: currentUserId,
       },
@@ -108,7 +111,7 @@ export function IntakeCallButton({ className }: IntakeCallButtonProps) {
         ) : (
           <Phone className="w-4 h-4 mr-2" />
         )}
-        {isSessionActive ? "Call Active" : "Call for Intake"}
+        {isSessionActive ? "Call Active" : "Test Intake"}
       </Button>
 
       {/* Call Modal */}
