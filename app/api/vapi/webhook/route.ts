@@ -40,23 +40,35 @@ interface VapiRequest {
   call?: {
     id: string;
     metadata?: Record<string, unknown>;
+    assistantOverrides?: {
+      metadata?: Record<string, unknown>;
+    };
   };
 }
 
 // Get database connection from request metadata or environment
-function getConnectionString(metadata?: Record<string, unknown>): string | null {
-  // First try from call metadata (passed from client)
-  if (metadata?.connectionString) {
-    return metadata.connectionString as string;
+function getConnectionString(call?: VapiRequest['call']): string | null {
+  // Try assistantOverrides.metadata first (from Web SDK)
+  if (call?.assistantOverrides?.metadata?.connectionString) {
+    return call.assistantOverrides.metadata.connectionString as string;
+  }
+  // Try call.metadata (from API calls or alternate format)
+  if (call?.metadata?.connectionString) {
+    return call.metadata.connectionString as string;
   }
   // Fall back to environment variable
   return process.env.DATABASE_URL || null;
 }
 
 // Get userId from request metadata
-function getUserId(metadata?: Record<string, unknown>): string | null {
-  if (metadata?.userId) {
-    return metadata.userId as string;
+function getUserId(call?: VapiRequest['call']): string | null {
+  // Try assistantOverrides.metadata first (from Web SDK)
+  if (call?.assistantOverrides?.metadata?.userId) {
+    return call.assistantOverrides.metadata.userId as string;
+  }
+  // Try call.metadata (from API calls or alternate format)
+  if (call?.metadata?.userId) {
+    return call.metadata.userId as string;
   }
   return null;
 }
@@ -77,7 +89,11 @@ export async function POST(request: NextRequest) {
     // Log incoming request for debugging
     console.log('[VAPI Webhook] Received request:', {
       messageType: body.message?.type,
+      hasCall: !!body.call,
       hasMetadata: !!body.call?.metadata,
+      hasAssistantOverrides: !!body.call?.assistantOverrides,
+      metadata: body.call?.metadata, // Direct metadata
+      assistantOverridesMetadata: body.call?.assistantOverrides?.metadata, // Web SDK metadata
     });
 
     // Handle both function-call and tool-calls message types
@@ -116,8 +132,8 @@ export async function POST(request: NextRequest) {
       });
     }
 
-    const connectionString = getConnectionString(body.call?.metadata);
-    const userId = getUserId(body.call?.metadata);
+    const connectionString = getConnectionString(body.call);
+    const userId = getUserId(body.call);
 
     console.log('[VAPI Webhook] Function call:', {
       functionName: name,
@@ -126,21 +142,29 @@ export async function POST(request: NextRequest) {
     });
 
     if (!connectionString) {
-      console.error('[VAPI Webhook] Missing connectionString in metadata');
+      console.error('[VAPI Webhook] Missing connectionString in metadata', {
+        hasCallObject: !!body.call,
+        hasMetadata: !!body.call?.metadata,
+        metadataKeys: body.call?.metadata ? Object.keys(body.call.metadata) : [],
+      });
       return NextResponse.json({
         result: JSON.stringify({
           success: false,
-          error: 'Database connection not configured. Ensure connectionString is passed in call metadata.',
+          error: 'Database connection not configured. Ensure connectionString is passed in call metadata. If testing from VAPI dashboard, metadata must be configured in assistant overrides.',
         }),
       });
     }
 
     if (!userId) {
-      console.error('[VAPI Webhook] Missing userId in metadata');
+      console.error('[VAPI Webhook] Missing userId in metadata', {
+        hasCallObject: !!body.call,
+        hasMetadata: !!body.call?.metadata,
+        metadataKeys: body.call?.metadata ? Object.keys(body.call.metadata) : [],
+      });
       return NextResponse.json({
         result: JSON.stringify({
           success: false,
-          error: 'User ID not provided in metadata. Ensure userId is passed in call metadata.',
+          error: 'User ID not provided in metadata. Ensure userId is passed in call metadata. If testing from VAPI dashboard, metadata must be configured in assistant overrides.',
         }),
       });
     }
