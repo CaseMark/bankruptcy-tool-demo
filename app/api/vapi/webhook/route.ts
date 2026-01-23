@@ -78,6 +78,8 @@ export async function POST(request: NextRequest) {
     console.log('[VAPI Webhook] Received request:', {
       messageType: body.message?.type,
       hasMetadata: !!body.call?.metadata,
+      metadata: body.call?.metadata, // Log full metadata for debugging
+      hasCall: !!body.call,
     });
 
     // Handle both function-call and tool-calls message types
@@ -126,21 +128,29 @@ export async function POST(request: NextRequest) {
     });
 
     if (!connectionString) {
-      console.error('[VAPI Webhook] Missing connectionString in metadata');
+      console.error('[VAPI Webhook] Missing connectionString in metadata', {
+        hasCallObject: !!body.call,
+        hasMetadata: !!body.call?.metadata,
+        metadataKeys: body.call?.metadata ? Object.keys(body.call.metadata) : [],
+      });
       return NextResponse.json({
         result: JSON.stringify({
           success: false,
-          error: 'Database connection not configured. Ensure connectionString is passed in call metadata.',
+          error: 'Database connection not configured. Ensure connectionString is passed in call metadata. If testing from VAPI dashboard, metadata must be configured in assistant overrides.',
         }),
       });
     }
 
     if (!userId) {
-      console.error('[VAPI Webhook] Missing userId in metadata');
+      console.error('[VAPI Webhook] Missing userId in metadata', {
+        hasCallObject: !!body.call,
+        hasMetadata: !!body.call?.metadata,
+        metadataKeys: body.call?.metadata ? Object.keys(body.call.metadata) : [],
+      });
       return NextResponse.json({
         result: JSON.stringify({
           success: false,
-          error: 'User ID not provided in metadata. Ensure userId is passed in call metadata.',
+          error: 'User ID not provided in metadata. Ensure userId is passed in call metadata. If testing from VAPI dashboard, metadata must be configured in assistant overrides.',
         }),
       });
     }
