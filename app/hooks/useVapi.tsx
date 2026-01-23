@@ -113,6 +113,11 @@ export const useVapi = (config: VapiConfig) => {
           }));
         }
       }
+
+      // Handle call end events from VAPI
+      if (message.type === 'end-of-call-report' || message.type === 'hang') {
+        console.log('Call ended by assistant or remote party');
+      }
     };
 
     const handleVolumeLevel = (level: number) => {
