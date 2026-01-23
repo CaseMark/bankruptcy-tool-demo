@@ -39,8 +39,55 @@ const SYSTEM_PROMPT = `You are a helpful bankruptcy assistant for a law firm's c
    - For existing clients, help them update their information
 
 2. **Case Questions**: Answer questions about specific bankruptcy cases when the client is verified.
+   - You can check what documents have been uploaded
+   - You can tell them what documents are still required
+   - You can provide case status and details
 
-3. **Platform Features**: Explain available features:
+3. **Chapter 7 Bankruptcy Information**: Answer general questions about Chapter 7 bankruptcy:
+
+   **Eligibility Requirements:**
+   - Individuals, partnerships, and corporations can file Chapter 7
+   - Must complete credit counseling within 180 days before filing
+   - The means test applies if income exceeds state median - if monthly income over 5 years (minus allowed expenses) meets certain thresholds, filing may be presumptively abusive
+   - Cannot file if a prior case was dismissed within 180 days due to failure to appear or comply with court orders
+
+   **Filing Process:**
+   - File with the bankruptcy court serving your area
+   - Required documents: Schedules of assets/liabilities, income/expenditures statement, financial affairs documentation, executory contracts and lease records
+   - Filing fees: $245 case fee + $75 administrative fee + $15 trustee surcharge = $335 total
+   - Installment payments allowed (max 4 installments, final due within 120 days)
+   - Fee waivers available for those earning below 150% of poverty level
+   - Creditors' meeting occurs 21-40 days after filing (trustee questions debtor under oath)
+
+   **Dischargeable Debts (generally discharged):**
+   - Most consumer and business debts
+   - Credit card debt, medical bills, personal loans
+
+   **Non-Dischargeable Debts:**
+   - Alimony and child support
+   - Certain taxes
+   - Student loans (with rare exceptions)
+   - Criminal restitution
+   - Debts from fraud or willful injury
+   - DUI-related injuries
+
+   **Property - Exempt vs Non-Exempt:**
+   - "Exempt" property is protected under federal or state law (varies by jurisdiction)
+   - Trustee liquidates nonexempt assets to pay creditors
+   - Secured property (mortgages, liens) may require reaffirmation agreements to retain
+
+   **Timeline:**
+   - Discharge typically 60-90 days after creditors' meeting
+   - Discharge releases personal liability for most debts
+   - Prevents creditors from collection actions
+
+   **Means Test:**
+   - Compares your income to state median income by household size
+   - If above median, calculates disposable income using IRS expense standards
+   - Categories: National Standards (food, clothing, personal care), Healthcare, Local Standards (housing/utilities by county, transportation by region)
+   - If disposable income too high, may need to file Chapter 13 instead
+
+4. **Platform Features**: Explain available features:
    - Client Intake: Secure portal for document collection
    - Document Upload: OCR & AI-powered data extraction
    - Means Test: Automatic Chapter 7 eligibility calculation
@@ -59,7 +106,9 @@ Available actions:
 - [ACTION: verify_client | first_name: X | last_name: Y | ssn_last_4: XXXX]
 - [ACTION: create_case | client_name: X | ssn_last_4: XXXX | case_type: chapter7 | filing_type: individual]
 - [ACTION: update_case | case_id: X | field: value | ...]
-- [ACTION: get_case_info | case_id: X]`;
+- [ACTION: get_case_info | case_id: X]
+- [ACTION: get_documents | case_id: X]
+- [ACTION: get_required_documents | case_id: X]`;
 
 export async function POST(request: NextRequest) {
   try {
@@ -369,7 +418,139 @@ What would you like to know more about or update?`,
       };
     }
 
+    case "get_documents": {
+      const caseId = params.case_id;
+      if (!caseId) {
+        return { message: "Please verify your identity first to view your documents." };
+      }
+
+      // Check if case_documents table exists
+      const tableExists = await sql`
+        SELECT EXISTS (
+          SELECT FROM information_schema.tables
+          WHERE table_name = 'case_documents'
+        )
+      `;
+
+      if (!tableExists[0].exists) {
+        return { message: "No documents have been uploaded to your case yet. Would you like information on what documents are required?" };
+      }
+
+      const documents = await sql`
+        SELECT file_name, document_type, validation_status, uploaded_at
+        FROM case_documents
+        WHERE case_id = ${caseId}
+        ORDER BY uploaded_at DESC
+      `;
+
+      if (documents.length === 0) {
+        return { message: "No documents have been uploaded to your case yet. Would you like information on what documents are required for a Chapter 7 filing?" };
+      }
+
+      const docList = documents.map((d: any) => {
+        const status = d.validation_status === "valid" ? "Validated" :
+                       d.validation_status === "pending" ? "Processing" : "Needs Review";
+        const type = formatDocumentType(d.document_type);
+        return `- **${d.file_name}** (${type}) - ${status}`;
+      }).join("\n");
+
+      return {
+        message: `Here are the documents uploaded to your case:\n\n${docList}\n\nWould you like to know what other documents may be needed?`,
+      };
+    }
+
+    case "get_required_documents": {
+      const caseId = params.case_id;
+      if (!caseId) {
+        return { message: "Please verify your identity first to check required documents." };
+      }
+
+      // Define required documents for Chapter 7
+      const requiredDocs = [
+        { type: "tax_return", label: "Tax Returns (Last 2 Years)", required: true },
+        { type: "paystub", label: "Pay Stubs (Last 6 Months)", required: true },
+        { type: "bank_statement", label: "Bank Statements (Last 6 Months)", required: true },
+        { type: "mortgage", label: "Mortgage Statement or Lease", required: true },
+        { type: "credit_card", label: "Credit Card Statements", required: true },
+        { type: "vehicle_title", label: "Vehicle Titles & Loan Statements", required: false },
+        { type: "medical_bill", label: "Medical Bills", required: false },
+        { type: "utility", label: "Utility Bills", required: false },
+      ];
+
+      // Check what's been uploaded
+      let uploadedTypes: string[] = [];
+      const tableExists = await sql`
+        SELECT EXISTS (
+          SELECT FROM information_schema.tables
+          WHERE table_name = 'case_documents'
+        )
+      `;
+
+      if (tableExists[0].exists) {
+        const docs = await sql`
+          SELECT DISTINCT document_type FROM case_documents WHERE case_id = ${caseId}
+        `;
+        uploadedTypes = docs.map((d: any) => d.document_type);
+      }
+
+      const missingRequired = requiredDocs
+        .filter(d => d.required && !uploadedTypes.includes(d.type))
+        .map(d => `- ${d.label}`);
+
+      const missingOptional = requiredDocs
+        .filter(d => !d.required && !uploadedTypes.includes(d.type))
+        .map(d => `- ${d.label} (optional)`);
+
+      const completedDocs = requiredDocs
+        .filter(d => uploadedTypes.includes(d.type))
+        .map(d => `- ${d.label}`);
+
+      let message = "";
+
+      if (completedDocs.length > 0) {
+        message += `**Documents Uploaded:**\n${completedDocs.join("\n")}\n\n`;
+      }
+
+      if (missingRequired.length > 0) {
+        message += `**Still Required:**\n${missingRequired.join("\n")}\n\n`;
+      } else {
+        message += `All required documents have been uploaded.\n\n`;
+      }
+
+      if (missingOptional.length > 0) {
+        message += `**Optional Documents:**\n${missingOptional.join("\n")}\n\n`;
+      }
+
+      message += "You can upload documents through the case dashboard or ask me any questions about what each document should contain.";
+
+      return { message };
+    }
+
     default:
       return { message: "I'm not sure how to help with that. Can you please rephrase?" };
   }
+}
+
+// Helper function to format document type for display
+function formatDocumentType(type: string | null): string {
+  if (!type) return "Unknown";
+  const typeMap: Record<string, string> = {
+    tax_return: "Tax Return",
+    paystub: "Pay Stub",
+    bank_statement: "Bank Statement",
+    mortgage: "Mortgage/Lease",
+    credit_card: "Credit Card Statement",
+    vehicle_title: "Vehicle Title",
+    medical_bill: "Medical Bill",
+    utility: "Utility Bill",
+    w2: "W-2 Form",
+    "1099": "1099 Form",
+    loan_statement: "Loan Statement",
+    collection_notice: "Collection Notice",
+    property_deed: "Property Deed",
+    insurance: "Insurance Statement",
+    lease: "Lease Agreement",
+    other: "Other Document",
+  };
+  return typeMap[type] || type.replace(/_/g, " ").replace(/\b\w/g, c => c.toUpperCase());
 }

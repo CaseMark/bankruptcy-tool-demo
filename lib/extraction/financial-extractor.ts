@@ -5,6 +5,43 @@
 
 import { CaseDevClient } from '@/lib/case-dev/client';
 
+/**
+ * Monthly income record for 6-month CMI calculation per Form B 122A-2
+ * Each record represents income received in a specific calendar month
+ */
+export interface ExtractedMonthlyIncome {
+  incomeMonth: string; // YYYY-MM format (the month income was RECEIVED)
+  grossAmount: number; // Gross income received that month
+  netAmount: number | null; // Net income if available
+  employer: string | null; // Employer/payer name
+  incomeSource:
+    | 'employment'      // Line 2: Wages, salary, tips, bonuses, overtime, commissions
+    | 'self_employment' // Line 3: Net business/profession/farm income
+    | 'rental'          // Line 4: Rent and real property income
+    | 'interest'        // Line 5: Interest, dividends, royalties
+    | 'pension'         // Line 6: Pension and retirement income
+    | 'government'      // Line 7: State disability, unemployment, etc.
+    | 'spouse'          // Line 8: Income from spouse (if not filing jointly)
+    | 'alimony'         // Line 9: Alimony/maintenance received
+    | 'contributions'   // Line 10: Regular contributions from others
+    | 'other';          // Line 11: Other income
+  description: string; // e.g., "Bi-weekly paycheck", "Monthly rental income"
+  confidence: number; // 0-1 extraction confidence
+}
+
+/**
+ * Result of income extraction from a document
+ * Contains monthly breakdown for 6-month CMI calculation
+ */
+export interface IncomeExtractionResult {
+  documentId: string;
+  documentType: string;
+  monthlyIncomes: ExtractedMonthlyIncome[];
+  totalConfidence: number;
+  warnings: string[]; // e.g., "Could not determine exact pay period dates"
+}
+
+// Legacy interface for backward compatibility
 export interface ExtractedIncome {
   employerName: string;
   employmentType: 'full-time' | 'part-time' | 'contract' | 'self-employed';
@@ -76,7 +113,13 @@ export class FinancialDataExtractor {
       ],
     });
 
-    const content = response.choices[0].message.content;
+    // Safely extract content from response
+    const content = response?.choices?.[0]?.message?.content;
+    if (!content) {
+      console.warn('LLM income extraction returned unexpected response:', JSON.stringify(response));
+      return [];
+    }
+
     const jsonMatch = content.match(/\{[\s\S]*\}/);
 
     if (!jsonMatch) {
@@ -85,6 +128,241 @@ export class FinancialDataExtractor {
 
     const extracted = JSON.parse(jsonMatch[0]);
     return this.normalizeIncomeData(extracted);
+  }
+
+  /**
+   * Extract monthly income for 6-month CMI calculation per Form B 122A-2
+   *
+   * This method extracts income with specific calendar months for the means test.
+   * Per 11 U.S.C. § 101(10A), "current monthly income" is the average monthly income
+   * received during the 6 calendar months before filing.
+   *
+   * @param ocrText - OCR text from the document
+   * @param documentType - Type of document (paystub, w2, tax_return, 1099, etc.)
+   * @param documentId - ID of the source document
+   * @returns Income extraction result with monthly breakdown
+   */
+  async extractMonthlyIncome(
+    ocrText: string,
+    documentType: string,
+    documentId: string
+  ): Promise<IncomeExtractionResult> {
+    const prompt = this.buildMonthlyIncomePrompt(documentType);
+
+    const response = await this.client.llmComplete({
+      model: 'gpt-4o-mini',
+      messages: [
+        {
+          role: 'system',
+          content: prompt,
+        },
+        {
+          role: 'user',
+          content: `Extract monthly income information from this ${documentType} document:\n\n${ocrText}`,
+        },
+      ],
+    });
+
+    // Safely extract content from response
+    const content = response?.choices?.[0]?.message?.content;
+    if (!content) {
+      console.warn('LLM monthly income extraction returned unexpected response:', JSON.stringify(response));
+      return {
+        documentId,
+        documentType,
+        monthlyIncomes: [],
+        totalConfidence: 0,
+        warnings: ['LLM returned unexpected response format'],
+      };
+    }
+
+    const jsonMatch = content.match(/\{[\s\S]*\}/);
+
+    if (!jsonMatch) {
+      return {
+        documentId,
+        documentType,
+        monthlyIncomes: [],
+        totalConfidence: 0,
+        warnings: ['Failed to extract structured income data from document'],
+      };
+    }
+
+    try {
+      const extracted = JSON.parse(jsonMatch[0]);
+      return this.normalizeMonthlyIncomeData(extracted, documentId, documentType);
+    } catch (e) {
+      return {
+        documentId,
+        documentType,
+        monthlyIncomes: [],
+        totalConfidence: 0,
+        warnings: ['Failed to parse extracted income data'],
+      };
+    }
+  }
+
+  /**
+   * Build prompt for monthly income extraction
+   */
+  private buildMonthlyIncomePrompt(documentType: string): string {
+    const today = new Date();
+    const currentMonth = today.toISOString().slice(0, 7); // YYYY-MM
+
+    return `You are a bankruptcy paralegal assistant extracting income data for Chapter 7 means test compliance.
+
+CRITICAL: For Form B 122A-2, we need income broken down by CALENDAR MONTH (the month income was RECEIVED).
+
+Document type: ${documentType}
+Current month: ${currentMonth}
+
+Based on the document type, extract income as follows:
+
+FOR PAYSTUBS:
+- Identify the pay period end date and/or check date
+- Determine which calendar month(s) the payment was received in
+- If a paycheck spans two months, allocate to the month of the check date (when received)
+- Extract the gross pay for each payment
+
+FOR W-2s:
+- Extract annual gross wages (Box 1)
+- Divide by 12 to get monthly amount
+- The income should be attributed to each month of the tax year (January through December of that year)
+- Return 12 monthly records, one for each month
+
+FOR 1099s:
+- Extract total income
+- If periodic (e.g., quarterly), distribute to appropriate months
+- If annual, divide by 12 across all months of that tax year
+
+FOR TAX RETURNS:
+- Extract income from various schedules
+- Distribute across the 12 months of the tax year
+
+Return a JSON object with this EXACT structure:
+{
+  "monthlyIncomes": [
+    {
+      "incomeMonth": "YYYY-MM",
+      "grossAmount": <number>,
+      "netAmount": <number or null>,
+      "employer": "<string or null>",
+      "incomeSource": "employment" | "self_employment" | "rental" | "interest" | "pension" | "government" | "alimony" | "contributions" | "other",
+      "description": "<brief description of income>",
+      "confidence": <0-1 score>
+    }
+  ],
+  "warnings": ["<any issues or uncertainties>"]
+}
+
+Income source mapping:
+- employment: wages, salary, tips, bonuses, overtime, commissions
+- self_employment: business, profession, or farm net income
+- rental: rent and real property income
+- interest: interest, dividends, royalties
+- pension: pension and retirement income
+- government: state disability, unemployment benefits
+- alimony: alimony or maintenance received
+- contributions: regular contributions from others (family support)
+- other: any other income source
+
+IMPORTANT:
+- Use YYYY-MM format for incomeMonth (e.g., "2025-01" for January 2025)
+- grossAmount must be the actual gross amount received that month
+- Set confidence lower if dates are unclear or amounts are estimated
+- Include ALL income found in the document
+- Return ONLY the JSON object`;
+  }
+
+  /**
+   * Normalize and validate extracted monthly income data
+   */
+  private normalizeMonthlyIncomeData(
+    extracted: any,
+    documentId: string,
+    documentType: string
+  ): IncomeExtractionResult {
+    const warnings: string[] = extracted.warnings || [];
+
+    if (!extracted.monthlyIncomes || !Array.isArray(extracted.monthlyIncomes)) {
+      return {
+        documentId,
+        documentType,
+        monthlyIncomes: [],
+        totalConfidence: 0,
+        warnings: [...warnings, 'No monthly income data found in extraction'],
+      };
+    }
+
+    const monthlyIncomes: ExtractedMonthlyIncome[] = extracted.monthlyIncomes
+      .filter((income: any) => income.incomeMonth && income.grossAmount)
+      .map((income: any) => ({
+        incomeMonth: this.normalizeMonth(income.incomeMonth),
+        grossAmount: Math.round(parseFloat(income.grossAmount) * 100) / 100,
+        netAmount: income.netAmount ? Math.round(parseFloat(income.netAmount) * 100) / 100 : null,
+        employer: income.employer || null,
+        incomeSource: this.normalizeIncomeSource(income.incomeSource),
+        description: income.description || `Income from ${documentType}`,
+        confidence: Math.min(1, Math.max(0, parseFloat(income.confidence) || 0.7)),
+      }));
+
+    // Calculate average confidence
+    const totalConfidence = monthlyIncomes.length > 0
+      ? monthlyIncomes.reduce((sum, inc) => sum + inc.confidence, 0) / monthlyIncomes.length
+      : 0;
+
+    return {
+      documentId,
+      documentType,
+      monthlyIncomes,
+      totalConfidence,
+      warnings,
+    };
+  }
+
+  /**
+   * Normalize month format to YYYY-MM
+   */
+  private normalizeMonth(month: string): string {
+    // Handle various formats: "2025-01", "01/2025", "January 2025", etc.
+    if (/^\d{4}-\d{2}$/.test(month)) {
+      return month;
+    }
+
+    // Try to parse and format
+    const date = new Date(month + '-01');
+    if (!isNaN(date.getTime())) {
+      return date.toISOString().slice(0, 7);
+    }
+
+    // Default to current month if parsing fails
+    return new Date().toISOString().slice(0, 7);
+  }
+
+  /**
+   * Normalize income source to valid enum value
+   */
+  private normalizeIncomeSource(source: string): ExtractedMonthlyIncome['incomeSource'] {
+    const validSources = [
+      'employment', 'self_employment', 'rental', 'interest',
+      'pension', 'government', 'spouse', 'alimony', 'contributions', 'other'
+    ];
+
+    const normalized = source?.toLowerCase().replace(/-/g, '_');
+    if (validSources.includes(normalized)) {
+      return normalized as ExtractedMonthlyIncome['incomeSource'];
+    }
+
+    // Map common variations
+    if (normalized?.includes('wage') || normalized?.includes('salary')) return 'employment';
+    if (normalized?.includes('business') || normalized?.includes('self')) return 'self_employment';
+    if (normalized?.includes('rent')) return 'rental';
+    if (normalized?.includes('dividend') || normalized?.includes('interest')) return 'interest';
+    if (normalized?.includes('retire') || normalized?.includes('pension')) return 'pension';
+    if (normalized?.includes('unemploy') || normalized?.includes('disability')) return 'government';
+    if (normalized?.includes('alimony') || normalized?.includes('maintenance')) return 'alimony';
+
+    return 'other';
   }
 
   /**
@@ -107,7 +385,13 @@ export class FinancialDataExtractor {
       ],
     });
 
-    const content = response.choices[0].message.content;
+    // Safely extract content from response
+    const content = response?.choices?.[0]?.message?.content;
+    if (!content) {
+      console.warn('LLM debt extraction returned unexpected response:', JSON.stringify(response));
+      return [];
+    }
+
     const jsonMatch = content.match(/\{[\s\S]*\}/);
 
     if (!jsonMatch) {
@@ -138,7 +422,13 @@ export class FinancialDataExtractor {
       ],
     });
 
-    const content = response.choices[0].message.content;
+    // Safely extract content from response
+    const content = response?.choices?.[0]?.message?.content;
+    if (!content) {
+      console.warn('LLM asset extraction returned unexpected response:', JSON.stringify(response));
+      return [];
+    }
+
     const jsonMatch = content.match(/\{[\s\S]*\}/);
 
     if (!jsonMatch) {
@@ -187,7 +477,24 @@ Include ONLY the JSON object in your response. Calculate monthly averages if dat
       ],
     });
 
-    const content = response.choices[0].message.content;
+    // Safely extract content from response
+    const content = response?.choices?.[0]?.message?.content;
+    if (!content) {
+      console.warn('LLM expense extraction returned unexpected response:', JSON.stringify(response));
+      return {
+        housing: 0,
+        utilities: 0,
+        food: 0,
+        transportation: 0,
+        insurance: 0,
+        medical: 0,
+        childcare: 0,
+        other: 0,
+        source: 'llm-extraction-failed',
+        confidence: 0,
+      };
+    }
+
     const jsonMatch = content.match(/\{[\s\S]*\}/);
 
     if (!jsonMatch) {

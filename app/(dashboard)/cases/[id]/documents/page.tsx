@@ -16,12 +16,18 @@ import {
   ArrowLeft,
   Filter,
   Sparkles,
+  RefreshCw,
 } from "lucide-react";
 import Link from "next/link";
 import { Button } from "@/components/ui/button";
 import { DeleteConfirmationModal } from "@/components/cases/financial/delete-confirmation-modal";
 import { Label } from "@/components/ui/label";
 import { DocumentUploadWizard } from "@/components/cases/document-upload-wizard";
+import {
+  CHAPTER_7_REQUIRED_DOCUMENTS,
+  getMissingDocuments,
+  getDocumentCompletionPercentage,
+} from "@/lib/bankruptcy/required-documents";
 
 interface CaseData {
   id: string;
@@ -59,16 +65,8 @@ const DOCUMENT_TYPES = [
   { value: "other", label: "Other" },
 ];
 
-const REQUIRED_DOCUMENTS = [
-  { type: "tax_return", label: "Tax Returns (Last 2 Years)", required: true },
-  { type: "paystub", label: "Pay Stubs (Last 6 Months)", required: true },
-  { type: "bank_statement", label: "Bank Statements (Last 6 Months)", required: true },
-  { type: "mortgage", label: "Mortgage Statement or Lease", required: true },
-  { type: "vehicle_title", label: "Vehicle Titles & Loan Statements", required: false },
-  { type: "credit_card", label: "Credit Card Statements", required: true },
-  { type: "medical_bill", label: "Medical Bills", required: false },
-  { type: "utility", label: "Utility Bills", required: false },
-];
+// Use shared required documents from lib/bankruptcy/required-documents.ts
+// This ensures consistency across all pages (dashboard, documents, etc.)
 
 export default function CaseDocumentsPage() {
   const params = useParams();
@@ -100,6 +98,7 @@ export default function CaseDocumentsPage() {
 
   // Action states
   const [downloadingId, setDownloadingId] = useState<string | null>(null);
+  const [reprocessingId, setReprocessingId] = useState<string | null>(null);
   const [viewingDocument, setViewingDocument] = useState<Document | null>(null);
   const [documentText, setDocumentText] = useState<string | null>(null);
   const [loadingText, setLoadingText] = useState(false);
@@ -447,6 +446,50 @@ export default function CaseDocumentsPage() {
     setDocumentToDelete(null);
   };
 
+  // Re-process a document to re-run LLM extraction
+  const handleReprocess = async (doc: Document) => {
+    if (!connectionString || !apiKey) return;
+
+    setReprocessingId(doc.id);
+
+    try {
+      // Subscribe to SSE for processing status
+      const searchParams = new URLSearchParams({
+        connectionString,
+        apiKey,
+        reprocess: 'true', // Signal to re-run extraction
+      });
+
+      const url = `/api/documents/${doc.id}/status?${searchParams.toString()}`;
+      const eventSource = new EventSource(url);
+
+      eventSource.addEventListener("status", (event) => {
+        try {
+          const data = JSON.parse(event.data);
+
+          // If completed, close connection and refresh documents
+          if (data.status === "completed" || data.status === "error") {
+            eventSource.close();
+            setReprocessingId(null);
+            fetchDocuments();
+          }
+        } catch (e) {
+          console.error("Failed to parse SSE event:", e);
+        }
+      });
+
+      eventSource.addEventListener("error", () => {
+        eventSource.close();
+        setReprocessingId(null);
+        fetchDocuments();
+      });
+
+    } catch (err) {
+      console.error('Reprocess error:', err);
+      setReprocessingId(null);
+    }
+  };
+
   if (loading) {
     return (
       <div className="flex items-center justify-center min-h-[60vh]">
@@ -487,19 +530,19 @@ export default function CaseDocumentsPage() {
   const getDocumentsByType = (type: string) =>
     documents.filter((d) => d.documentType === type);
 
-  const missingRequiredDocs = REQUIRED_DOCUMENTS.filter(reqDoc => {
-    const uploadedDocs = getDocumentsByType(reqDoc.type);
-    return reqDoc.required && uploadedDocs.length === 0;
-  });
-
+  // Use shared required documents logic for consistency across pages
+  const uploadedDocTypes = documents.map(d => d.documentType).filter(Boolean) as string[];
+  const missingRequiredDocs = getMissingDocuments(uploadedDocTypes);
   const missingDocTypes = missingRequiredDocs.map(d => d.type);
+  const completionPercentage = getDocumentCompletionPercentage(uploadedDocTypes);
 
   const handleGuidedUploadComplete = () => {
     setShowGuidedUpload(false);
     fetchDocuments();
   };
 
-  const uploadedRequiredDocs = REQUIRED_DOCUMENTS.filter(reqDoc => {
+  // Get uploaded documents that match any required document type
+  const uploadedRequiredDocs = CHAPTER_7_REQUIRED_DOCUMENTS.filter(reqDoc => {
     const uploadedDocs = getDocumentsByType(reqDoc.type);
     return uploadedDocs.length > 0;
   });
@@ -732,7 +775,7 @@ export default function CaseDocumentsPage() {
               >
                 <div className="flex items-center gap-3">
                   <div className="w-2 h-2 rounded-full bg-amber-500" />
-                  <span className="text-sm font-medium">{reqDoc.label}</span>
+                  <span className="text-sm font-medium">{reqDoc.name}</span>
                 </div>
                 <Button
                   size="sm"
@@ -764,7 +807,7 @@ export default function CaseDocumentsPage() {
                   <div className="flex items-center gap-3">
                     <CheckCircle className="w-4 h-4 text-green-600" />
                     <div>
-                      <span className="text-sm font-medium">{reqDoc.label}</span>
+                      <span className="text-sm font-medium">{reqDoc.name}</span>
                       <span className="text-xs text-muted-foreground ml-2">
                         ({uploadedDocs.length} uploaded)
                       </span>
@@ -958,6 +1001,18 @@ export default function CaseDocumentsPage() {
                         <Loader2 className="w-4 h-4 animate-spin" />
                       ) : (
                         <Download className="w-4 h-4 text-muted-foreground" />
+                      )}
+                    </button>
+                    <button
+                      onClick={() => handleReprocess(doc)}
+                      disabled={reprocessingId === doc.id}
+                      className="p-2 hover:bg-muted rounded-lg transition-colors disabled:opacity-50"
+                      title="Re-process (re-extract financial data)"
+                    >
+                      {reprocessingId === doc.id ? (
+                        <Loader2 className="w-4 h-4 animate-spin text-blue-500" />
+                      ) : (
+                        <RefreshCw className="w-4 h-4 text-muted-foreground" />
                       )}
                     </button>
                     <button

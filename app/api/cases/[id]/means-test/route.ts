@@ -8,33 +8,100 @@ import {
   type MeansTestAllowances,
 } from '@/lib/bankruptcy/chapter7';
 
+/**
+ * Means Test API
+ *
+ * Calculates Chapter 7 eligibility per Form B 122A-2.
+ * Uses 6-month average Current Monthly Income (CMI) per 11 U.S.C. § 101(10A).
+ */
+
+interface MonthlyIncomeSummary {
+  month: string;
+  totalGross: number;
+  sources: { source: string; amount: number }[];
+}
+
+interface CMIDetails {
+  monthlyBreakdown: MonthlyIncomeSummary[];
+  sixMonthTotal: number;
+  currentMonthlyIncome: number; // CMI = 6-month total / 6
+  monthsCovered: number;
+  isComplete: boolean;
+}
+
 interface MeansTestResponse {
   caseId: string;
   calculatedAt: string;
   inputs: {
     state: string;
+    county: string | null;
     householdSize: number;
-    monthlyGrossIncome: number;
+    currentMonthlyIncome: number; // 6-month average CMI
     monthlyExpenses: number;
     totalUnsecuredDebt: number;
     totalSecuredDebt: number;
     hasVehicle: boolean;
     vehicleCount: number;
   };
+  cmiDetails: CMIDetails; // Detailed 6-month income breakdown
   irsAllowances: MeansTestAllowances;
   result: MeansTestResult;
 }
 
-// Helper to calculate monthly income from pay period
-function calculateMonthlyIncome(grossPay: number | null, payPeriod: string | null): number {
-  if (!grossPay) return 0;
-  switch (payPeriod) {
-    case 'weekly': return grossPay * 4.33;
-    case 'biweekly': return grossPay * 2.17;
-    case 'annual': return grossPay / 12;
-    case 'monthly':
-    default: return grossPay;
+/**
+ * Calculate Current Monthly Income (CMI) from income records
+ * Per Form B 122A-2: CMI = Total income for 6 months / 6
+ */
+function calculateCMI(incomeRecords: any[]): CMIDetails {
+  const monthlyTotals = new Map<string, MonthlyIncomeSummary>();
+
+  for (const record of incomeRecords) {
+    const month = record.income_month;
+    if (!month) continue;
+
+    if (!monthlyTotals.has(month)) {
+      monthlyTotals.set(month, {
+        month,
+        totalGross: 0,
+        sources: [],
+      });
+    }
+
+    const summary = monthlyTotals.get(month)!;
+    const grossAmount = Number(record.gross_amount) || 0;
+
+    summary.totalGross += grossAmount;
+
+    // Track by source
+    const existingSource = summary.sources.find(s => s.source === record.income_source);
+    if (existingSource) {
+      existingSource.amount += grossAmount;
+    } else {
+      summary.sources.push({
+        source: record.income_source || 'employment',
+        amount: grossAmount,
+      });
+    }
   }
+
+  // Sort months descending and take the 6 most recent
+  const sortedMonths = Array.from(monthlyTotals.values())
+    .sort((a, b) => b.month.localeCompare(a.month))
+    .slice(0, 6);
+
+  const sixMonthTotal = sortedMonths.reduce((sum, m) => sum + m.totalGross, 0);
+  const monthsCovered = sortedMonths.length;
+
+  // CMI is always divided by 6 per Form B 122A-2
+  const currentMonthlyIncome = sixMonthTotal / 6;
+
+  return {
+    monthlyBreakdown: sortedMonths,
+    sixMonthTotal,
+    currentMonthlyIncome: Math.round(currentMonthlyIncome * 100) / 100,
+    monthsCovered,
+    isComplete: monthsCovered >= 6,
+  };
 }
 
 export async function GET(
@@ -51,10 +118,10 @@ export async function GET(
   const sql = postgres(connectionString);
 
   try {
-    // Fetch case data
+    // Fetch case data including county for IRS Local Standards
     const caseResult = await sql`
       SELECT id, client_name, case_type, status, monthly_income, monthly_expenses,
-             total_assets, total_debt, household_size, state
+             total_assets, total_debt, household_size, state, county
       FROM bankruptcy_cases
       WHERE id = ${caseId}
     `;
@@ -65,9 +132,13 @@ export async function GET(
 
     const caseData = caseResult[0];
 
-    // Fetch income records
+    // Fetch income records with new schema (income_month, gross_amount)
+    // Get all records to calculate 6-month CMI
     const incomeRecords = await sql`
-      SELECT gross_pay, pay_period FROM income WHERE case_id = ${caseId}
+      SELECT income_month, gross_amount, income_source
+      FROM income_records
+      WHERE case_id = ${caseId}
+      ORDER BY income_month DESC
     `;
 
     // Fetch expense records
@@ -85,11 +156,9 @@ export async function GET(
       SELECT asset_type FROM assets WHERE case_id = ${caseId}
     `;
 
-    // Calculate totals from actual data
-    const monthlyGrossIncome = incomeRecords.reduce(
-      (sum, r) => sum + calculateMonthlyIncome(Number(r.gross_pay), r.pay_period),
-      0
-    );
+    // Calculate 6-month CMI per Form B 122A-2
+    const cmiDetails = calculateCMI(incomeRecords);
+    const currentMonthlyIncome = cmiDetails.currentMonthlyIncome;
 
     const monthlyExpenses = expenseRecords.reduce(
       (sum, e) => sum + Number(e.monthly_amount),
@@ -108,26 +177,29 @@ export async function GET(
     const vehicleCount = assetRecords.filter(a => a.asset_type === 'vehicle').length;
     const hasVehicle = vehicleCount > 0;
 
-    // Get state and household size from case
+    // Get state, county, and household size from case
     const state = caseData.state || 'CA';
+    const county = caseData.county || null;
     const householdSize = caseData.household_size || 1;
 
-    // Calculate IRS allowances
+    // Calculate IRS allowances (uses county-level housing and regional transportation)
     const irsAllowances = calculateIRSAllowances(
       state,
       householdSize,
+      county,
       hasVehicle,
       vehicleCount || 1,
-      40 // Default age
+      40
     );
 
-    // Calculate means test result
+    // Calculate means test result using 6-month CMI
     const result = calculateMeansTest(
       state,
       householdSize,
-      monthlyGrossIncome,
+      currentMonthlyIncome, // Use 6-month average CMI
       monthlyExpenses,
       totalUnsecuredDebt,
+      county,
       hasVehicle,
       vehicleCount || 1,
       40
@@ -138,14 +210,16 @@ export async function GET(
       calculatedAt: new Date().toISOString(),
       inputs: {
         state,
+        county,
         householdSize,
-        monthlyGrossIncome,
+        currentMonthlyIncome, // 6-month average
         monthlyExpenses,
         totalUnsecuredDebt,
         totalSecuredDebt,
         hasVehicle,
         vehicleCount: vehicleCount || 0,
       },
+      cmiDetails, // Include full 6-month breakdown
       irsAllowances,
       result,
     };
@@ -176,10 +250,10 @@ export async function POST(
   const sql = postgres(connectionString);
 
   try {
-    // Fetch case data
+    // Fetch case data including county for IRS Local Standards
     const caseResult = await sql`
       SELECT id, client_name, case_type, status, monthly_income, monthly_expenses,
-             total_assets, total_debt, household_size, state
+             total_assets, total_debt, household_size, state, county
       FROM bankruptcy_cases
       WHERE id = ${caseId}
     `;
@@ -190,9 +264,12 @@ export async function POST(
 
     const caseData = caseResult[0];
 
-    // Fetch income records
+    // Fetch income records with new schema
     const incomeRecords = await sql`
-      SELECT gross_pay, pay_period FROM income WHERE case_id = ${caseId}
+      SELECT income_month, gross_amount, income_source
+      FROM income_records
+      WHERE case_id = ${caseId}
+      ORDER BY income_month DESC
     `;
 
     // Fetch expense records
@@ -210,11 +287,9 @@ export async function POST(
       SELECT asset_type FROM assets WHERE case_id = ${caseId}
     `;
 
-    // Calculate totals from actual data
-    const monthlyGrossIncome = incomeRecords.reduce(
-      (sum, r) => sum + calculateMonthlyIncome(Number(r.gross_pay), r.pay_period),
-      0
-    );
+    // Calculate 6-month CMI per Form B 122A-2
+    const cmiDetails = calculateCMI(incomeRecords);
+    const currentMonthlyIncome = cmiDetails.currentMonthlyIncome;
 
     const monthlyExpenses = expenseRecords.reduce(
       (sum, e) => sum + Number(e.monthly_amount),
@@ -240,26 +315,29 @@ export async function POST(
     const vehicleCount = assetRecords.filter(a => a.asset_type === 'vehicle').length;
     const hasVehicle = vehicleCount > 0;
 
-    // Get state and household size from case
+    // Get state, county, and household size from case
     const state = caseData.state || 'CA';
+    const county = caseData.county || null;
     const householdSize = caseData.household_size || 1;
 
     // Calculate IRS allowances
     const irsAllowances = calculateIRSAllowances(
       state,
       householdSize,
+      county,
       hasVehicle,
       vehicleCount || 1,
       40
     );
 
-    // Calculate means test result
+    // Calculate means test result using 6-month CMI
     const result = calculateMeansTest(
       state,
       householdSize,
-      monthlyGrossIncome,
+      currentMonthlyIncome,
       monthlyExpenses,
       totalUnsecuredDebt,
+      county,
       hasVehicle,
       vehicleCount || 1,
       40
@@ -269,7 +347,7 @@ export async function POST(
     await sql`
       UPDATE bankruptcy_cases
       SET
-        monthly_income = ${monthlyGrossIncome},
+        monthly_income = ${currentMonthlyIncome},
         monthly_expenses = ${monthlyExpenses},
         total_debt = ${totalDebt},
         total_assets = ${Number(totalAssets[0].total)},
@@ -282,14 +360,16 @@ export async function POST(
       calculatedAt: new Date().toISOString(),
       inputs: {
         state,
+        county,
         householdSize,
-        monthlyGrossIncome,
+        currentMonthlyIncome,
         monthlyExpenses,
         totalUnsecuredDebt,
         totalSecuredDebt,
         hasVehicle,
         vehicleCount: vehicleCount || 0,
       },
+      cmiDetails,
       irsAllowances,
       result,
     };

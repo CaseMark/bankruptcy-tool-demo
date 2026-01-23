@@ -264,23 +264,41 @@ export const incomeRecords = pgTable(
     documentId: uuid('document_id')
       .references(() => caseDocuments.id, { onDelete: 'set null' }),
 
+    // Income Month (YYYY-MM format for 6-month CMI tracking per Form B 122A-2)
+    // This is the calendar month the income was RECEIVED (not earned)
+    incomeMonth: text('income_month').notNull(), // e.g., '2025-01'
+
     // Income Details
     employer: text('employer'),
     occupation: text('occupation'),
-    grossPay: decimal('gross_pay', { precision: 10, scale: 2 }),
-    netPay: decimal('net_pay', { precision: 10, scale: 2 }),
-    payPeriod: text('pay_period').$type<'weekly' | 'biweekly' | 'monthly' | 'annual'>(),
-    payDate: date('pay_date'),
-    ytdGross: decimal('ytd_gross', { precision: 10, scale: 2 }),
+    grossAmount: decimal('gross_amount', { precision: 10, scale: 2 }).notNull(),
+    netAmount: decimal('net_amount', { precision: 10, scale: 2 }),
 
-    // Income Source Type
-    incomeSource: text('income_source').default('employment')
-      .$type<'employment' | 'business' | 'rental' | 'government' | 'other'>(),
+    // Income Source Type (per Form B 122A-2 income categories)
+    incomeSource: text('income_source').notNull().default('employment')
+      .$type<
+        | 'employment'      // Line 2: Gross wages, salary, tips, bonuses, overtime, commissions
+        | 'self_employment' // Line 3: Net income from business, profession, or farm
+        | 'rental'          // Line 4: Rent and other real property income
+        | 'interest'        // Line 5: Interest, dividends, and royalties
+        | 'pension'         // Line 6: Pension and retirement income
+        | 'government'      // Line 7: State disability, unemployment, etc.
+        | 'spouse'          // Line 8: Income from spouse (if not filing jointly)
+        | 'alimony'         // Line 9: Alimony/maintenance received
+        | 'contributions'   // Line 10: Regular contributions from others
+        | 'other'           // Line 11: Other income
+      >(),
+
+    // Additional metadata
+    description: text('description'), // e.g., "Bi-weekly paycheck", "Monthly rental income"
+    confidence: decimal('confidence', { precision: 3, scale: 2 }), // LLM extraction confidence 0-1
+    extractedAt: timestamp('extracted_at'), // When LLM extraction occurred
 
     createdAt: timestamp('created_at').notNull().defaultNow(),
   },
   (table) => ({
     caseIdIdx: index('income_records_case_id_idx').on(table.caseId),
+    incomeMonthIdx: index('income_records_month_idx').on(table.incomeMonth),
   })
 );
 

@@ -45,13 +45,17 @@ interface BankruptcyCase {
 
 interface IncomeRecord {
   id: string;
+  caseId: string;
+  documentId: string | null;
+  incomeMonth: string; // YYYY-MM format
   employer: string | null;
-  occupation: string | null;
-  grossPay: number | null;
-  netPay: number | null;
-  payPeriod: string | null;
-  incomeSource: string | null;
-  ytdGross: number | null;
+  grossAmount: number;
+  netAmount: number | null;
+  incomeSource: string;
+  description: string | null;
+  confidence: number | null;
+  extractedAt: string | null;
+  createdAt: string;
 }
 
 interface ExpenseRecord {
@@ -130,16 +134,29 @@ const CATEGORY_LABELS: Record<string, string> = {
   other: 'Other',
 };
 
-// Helper to calculate monthly income from pay period
-function calculateMonthlyIncome(grossPay: number | null, payPeriod: string | null): number {
-  if (!grossPay) return 0;
-  switch (payPeriod) {
-    case 'weekly': return grossPay * 4.33;
-    case 'biweekly': return grossPay * 2.17;
-    case 'annual': return grossPay / 12;
-    case 'monthly':
-    default: return grossPay;
-  }
+// Format income month (YYYY-MM) to readable format
+function formatIncomeMonth(incomeMonth: string): string {
+  if (!incomeMonth) return 'Unknown';
+  const [year, month] = incomeMonth.split('-');
+  const date = new Date(parseInt(year), parseInt(month) - 1);
+  return date.toLocaleDateString('en-US', { month: 'short', year: 'numeric' });
+}
+
+// Format income source to readable label
+function formatIncomeSource(source: string): string {
+  const labels: Record<string, string> = {
+    employment: 'Employment',
+    self_employment: 'Self-Employment',
+    rental: 'Rental Income',
+    interest: 'Interest/Dividends',
+    pension: 'Pension/Retirement',
+    government: 'Government Benefits',
+    spouse: 'Spouse Income',
+    alimony: 'Alimony',
+    contributions: 'Contributions',
+    other: 'Other Income',
+  };
+  return labels[source] || source;
 }
 
 export default function CaseFinancialPage() {
@@ -184,7 +201,7 @@ export default function CaseFinancialPage() {
 
       if (incomeRes.ok) {
         const data = await incomeRes.json();
-        setIncomeRecords(data.income || []);
+        setIncomeRecords(data.incomeRecords || []);
       }
       if (expenseRes.ok) {
         const data = await expenseRes.json();
@@ -296,10 +313,22 @@ export default function CaseFinancialPage() {
   }
 
   // Calculate totals from actual data
-  const totalMonthlyIncome = incomeRecords.reduce(
-    (sum, r) => sum + calculateMonthlyIncome(r.grossPay, r.payPeriod),
-    0
-  );
+  // For income, calculate CMI (Current Monthly Income) per Form B 122A-2:
+  // Sum income from 6 most recent months, divide by 6
+  const incomeByMonth = incomeRecords.reduce((acc, r) => {
+    const month = r.incomeMonth;
+    if (!acc[month]) acc[month] = 0;
+    acc[month] += Number(r.grossAmount) || 0;
+    return acc;
+  }, {} as Record<string, number>);
+
+  // Get the 6 most recent months and sum them
+  const sortedMonths = Object.entries(incomeByMonth)
+    .sort(([a], [b]) => b.localeCompare(a))
+    .slice(0, 6);
+  const sixMonthTotal = sortedMonths.reduce((sum, [, amt]) => sum + amt, 0);
+  // CMI = 6-month total / 6
+  const totalMonthlyIncome = sixMonthTotal / 6;
   const totalMonthlyExpenses = expenseRecords.reduce((sum, e) => sum + Number(e.monthlyAmount), 0);
   const totalAssets = assetRecords.reduce((sum, a) => sum + Number(a.currentValue), 0);
   const totalDebt = debtRecords.reduce((sum, d) => sum + Number(d.balance), 0);
@@ -557,20 +586,20 @@ export default function CaseFinancialPage() {
 
           {incomeRecords.length > 0 ? (
             <>
-              <div className="space-y-3">
+              <div className="space-y-3 max-h-[300px] overflow-y-auto">
                 {incomeRecords.map((record) => (
                   <div key={record.id} className="flex items-center justify-between p-3 bg-muted/50 rounded-lg group">
                     <div className="flex items-center gap-3">
                       <div>
-                        <p className="font-medium">{record.employer || record.incomeSource || 'Income'}</p>
+                        <p className="font-medium">{record.employer || formatIncomeSource(record.incomeSource)}</p>
                         <p className="text-sm text-muted-foreground">
-                          {record.occupation || record.payPeriod || 'Monthly'}
+                          {formatIncomeMonth(record.incomeMonth)} &bull; {formatIncomeSource(record.incomeSource)}
                         </p>
                       </div>
                     </div>
                     <div className="flex items-center gap-3">
                       <span className="font-semibold">
-                        ${calculateMonthlyIncome(record.grossPay, record.payPeriod).toLocaleString(undefined, { maximumFractionDigits: 0 })}/mo
+                        ${Number(record.grossAmount).toLocaleString(undefined, { maximumFractionDigits: 0 })}
                       </span>
                       <button
                         onClick={() => handleDeleteClick('income', record.id, record.employer || 'Income')}
@@ -582,10 +611,18 @@ export default function CaseFinancialPage() {
                   </div>
                 ))}
               </div>
-              <div className="mt-4 pt-4 border-t">
+              <div className="mt-4 pt-4 border-t space-y-2">
                 <div className="flex justify-between text-sm">
-                  <span className="text-muted-foreground">Annual Income</span>
-                  <span className="font-semibold">${annualIncome.toLocaleString(undefined, { maximumFractionDigits: 0 })}</span>
+                  <span className="text-muted-foreground">6-Month Total</span>
+                  <span className="font-semibold">${sixMonthTotal.toLocaleString(undefined, { maximumFractionDigits: 0 })}</span>
+                </div>
+                <div className="flex justify-between text-sm">
+                  <span className="text-muted-foreground">CMI (Monthly Avg)</span>
+                  <span className="font-semibold">${totalMonthlyIncome.toLocaleString(undefined, { maximumFractionDigits: 0 })}/mo</span>
+                </div>
+                <div className="flex justify-between">
+                  <span className="font-medium">Annualized Income</span>
+                  <span className="font-bold">${annualIncome.toLocaleString(undefined, { maximumFractionDigits: 0 })}</span>
                 </div>
               </div>
             </>
